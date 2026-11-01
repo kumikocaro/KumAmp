@@ -96,7 +96,10 @@ public:
     void assignMacro (int macro, StoreId store, int param, float minValue, float maxValue);
 
     void loadDefaultPreset();
-    void collectGarbage();
+
+    /** Message thread timer: frees retired objects and re-evaluates the
+        NAM End-to-End -> IR Loader auto-bypass links. */
+    void runMessageThreadTasks();
 
     juce::ValueTree saveState() const;
     void loadState (const juce::ValueTree& state);
@@ -106,6 +109,8 @@ public:
 private:
     void publishSceneBank();
     void pruneUnusedStores();
+    void updateCabLinks();
+    bool hasEndToEndUpstream (const GridNode& node) const;
     void applyScene (int sceneIndex, const RenderPlan* plan) noexcept;
     void applyMacros (const RenderPlan* plan) noexcept;
     void applyFade (float* const* outputs, int numOutputs, int numSamples) noexcept;

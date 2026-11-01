@@ -35,6 +35,18 @@ public:
 
     virtual int getLatencySamples() const noexcept { return 0; }
 
+    //== File slots (NAM models, IRs...). Message thread only. ===================
+    virtual int getNumFileSlots() const { return 0; }
+    virtual std::string getFileSlotName (int /*slot*/) const { return {}; }
+    virtual std::string getFileSlotPattern (int /*slot*/) const { return "*"; }
+    /** Starts loading asynchronously; the audio path swaps it in click-free. */
+    virtual bool loadFile (int /*slot*/, const std::string& /*path*/) { return false; }
+    virtual std::string getFilePath (int /*slot*/) const { return {}; }
+    virtual std::string getStatusText() const { return {}; }
+
+    /** Message thread: delete objects retired by the audio thread. */
+    virtual void collectGarbage() {}
+
     bool   isPrepared() const noexcept    { return prepared; }
     double getSampleRate() const noexcept { return currentSampleRate; }
     int    getMaxBlockSize() const noexcept { return maxBlock; }

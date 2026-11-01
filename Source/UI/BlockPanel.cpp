@@ -1,4 +1,5 @@
 #include "BlockPanel.h"
+#include "../Graph/DSPBlock.h"
 
 namespace kumamp
 {
@@ -14,12 +15,42 @@ BlockPanel::BlockPanel()
             store->setBypassed (bypass.getToggleState());
     };
     addChildComponent (bypass);
+
+    status.setColour (juce::Label::textColourId, juce::Colour (0xffaab3c5));
+    status.setFont (juce::FontOptions (13.0f));
+    addAndMakeVisible (status);
+}
+
+void BlockPanel::chooseFile (int slot)
+{
+    auto* block = dynamic_cast<DSPBlock*> (store.get());
+    if (block == nullptr)
+        return;
+
+    auto start = juce::File (juce::String (block->getFilePath (slot)));
+    if (! start.existsAsFile())
+        start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+
+    chooser = std::make_unique<juce::FileChooser> ("Cargar " + juce::String (block->getFileSlotName (slot)),
+                                                   start, juce::String (block->getFileSlotPattern (slot)));
+
+    std::weak_ptr<ParamStore> target = store;
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [target, slot] (const juce::FileChooser& fc)
+                          {
+                              const auto file = fc.getResult();
+                              if (auto locked = target.lock(); locked != nullptr && file.existsAsFile())
+                                  if (auto* b = dynamic_cast<DSPBlock*> (locked.get()))
+                                      b->loadFile (slot, file.getFullPathName().toStdString());
+                          });
 }
 
 void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
 {
     sliders.clear();
     labels.clear();
+    fileButtons.clear();
+    status.setText ({}, juce::dontSendNotification);
     store = std::move (newStore);
 
     if (store == nullptr)
@@ -35,6 +66,16 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
 
     const bool isRouting = store->getType() == BlockType::Splitter || store->getType() == BlockType::Mixer;
     bypass.setVisible (! isRouting);
+
+    if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
+    {
+        for (int slot = 0; slot < block->getNumFileSlots(); ++slot)
+        {
+            auto* button = fileButtons.add (new juce::TextButton ("Cargar " + juce::String (block->getFileSlotName (slot)) + "..."));
+            button->onClick = [this, slot] { chooseFile (slot); };
+            addAndMakeVisible (button);
+        }
+    }
 
     for (int i = 0; i < store->getNumParams(); ++i)
     {
@@ -73,6 +114,9 @@ void BlockPanel::refresh()
             s->setValue (store->getParam (i), juce::dontSendNotification);
 
     bypass.setToggleState (store->isBypassed(), juce::dontSendNotification);
+
+    if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
+        status.setText (juce::String (block->getStatusText()), juce::dontSendNotification);
 }
 
 void BlockPanel::paint (juce::Graphics& g)
@@ -86,8 +130,11 @@ void BlockPanel::resized()
     auto area = getLocalBounds().reduced (12);
     auto header = area.removeFromTop (28);
     bypass.setBounds (header.removeFromRight (100));
+    for (int i = fileButtons.size(); --i >= 0;)
+        fileButtons[i]->setBounds (header.removeFromRight (150).reduced (3, 0));
     title.setBounds (header);
-    area.removeFromTop (8);
+    status.setBounds (area.removeFromTop (20));
+    area.removeFromTop (4);
 
     constexpr int cellWidth = 96, cellHeight = 120;
     const int perRow = std::max (1, area.getWidth() / cellWidth);

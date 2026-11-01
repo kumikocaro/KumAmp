@@ -25,9 +25,14 @@ public:
     void resized() override;
 
 private:
+    void chooseFile (int slot);
+
     std::shared_ptr<ParamStore> store;
     juce::Label title;
     juce::ToggleButton bypass { "Bypass" };
+    juce::Label status;
+    juce::OwnedArray<juce::TextButton> fileButtons;
+    std::unique_ptr<juce::FileChooser> chooser;
     juce::OwnedArray<juce::Slider> sliders;
     juce::OwnedArray<juce::Label> labels;
 };

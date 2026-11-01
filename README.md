@@ -59,9 +59,27 @@ Funciona en el dominio del tiempo y es polifónico: no detecta tono, así que lo
 - Latencia dinámica de entre 0 y ~20 ms (grano de 15 ms). A 0 st la señal sale sin procesar y la latencia es cero.
 - Rubber Band (R3 Live Shifter) queda como alternativa futura: trabaja con un tamaño de bloque fijo, lo que añade latencia, y tiene licencia GPL o comercial.
 
+### NAM (Core)
+
+- Motor: [NeuralAmpModelerCore](https://github.com/sdatkinson/NeuralAmpModelerCore) v0.6.0 (MIT). Lee archivos `.nam` de las versiones 0.5 a 0.7: WaveNet A1/A2 ("NAM2"), LSTM, ConvNet y SlimmableContainer.
+- La carga se hace en un hilo aparte (`FileLoaderPool`): parseo, `Reset()` y prewarm. El modelo pasa al audio por `RTCrossfadeSlot` con un crossfade de 50 ms, sin clics.
+- La inferencia es mono, como todas las capturas NAM. Si la tasa de muestreo del host no coincide con la del entrenamiento, `RateBridge` remuestrea (Hermite; está pendiente un FIR polifásico).
+- Normalización a -18 dB usando el campo `loudness` de los metadatos.
+- **Detección de perfil:** el campo `gear_type` de los metadatos decide el tipo. Si contiene `cab` o `full_rig` el perfil es *End-to-End*; con `amp`, `pedal`, `preamp` y similares es *Amp-Only*. El parámetro "Perfil" permite forzarlo (0 Auto, 1 Amp, 2 E2E).
+
+### IR Loader (Cab)
+
+- Dos IR estéreo (A y B), cada una con nivel y pan, más low/high cut y mezcla. La convolución usa `juce::dsp::Convolution` con latencia cero en una cola compartida.
+- Las IR no se recortan, para no romper la relación de fase entre los micros A y B.
+- **Desacople condicional:** si hay un NAM End-to-End aguas arriba (y no está en bypass), el motor marca el IR Loader. El bloque hace un fundido a seco de 30 ms y deja de convolucionar. Funciona aparte del bypass manual y de las escenas, y se puede desactivar con el parámetro "Auto E2E".
+
+Las rutas de los modelos y las IR se guardan en el estado del plugin y se recargan al abrir el proyecto.
+
 ### Preset por defecto
 
-`IN → Transpose → Split → { Dry | Harmony(+7) } → Mix → Output → OUT`
+`IN → Transpose → Split → { Dry | Harmony(+7) } → Mix → Amp (NAM) → Cab (IR) → Output → OUT`
+
+Sin modelo ni IR cargados, los bloques Amp y Cab dejan pasar la señal sin cambios.
 
 | Escena | Contenido |
 |--------|-----------|
@@ -72,14 +90,19 @@ Funciona en el dominio del tiempo y es polifónico: no detecta tono, así que lo
 
 ## Validación
 
-- `KumAmpTests`: grid serie/paralelo, compensación de latencia, ciclos, bypass, escenas y precisión del pitch shifter (error < 0,05 Hz).
+- `KumAmpTests`: grid serie/paralelo, compensación de latencia, ciclos, bypass, escenas, precisión del pitch shifter (error < 0,05 Hz) y RateBridge.
+- `KumAmpIntegrationTests`, con JUCE y NAM reales:
+  - carga de los modelos de ejemplo WaveNet, LSTM, A2 y A1, incluido A2 remuestreado de 44,1 a 48 kHz;
+  - clasificación de perfiles y desacople E2E→IR, con override manual y opt-out;
+  - convolución con una IR de prueba e ida y vuelta del estado;
+  - **cero `operator new` en el hilo de audio**.
 - `auval -v aufx KAmp Kumo`: pasa.
 - `pluginval --strictness-level 7`: pasa.
 
 ## Roadmap
 
-1. Bloque NAM (inferencia NAM2 / Tone3000) con carga de modelos en un hilo aparte (`RTObjectPublisher`) y lectura de metadatos para distinguir *Amp-Only* de *End-to-End*.
-2. IR Loader dual estéreo con convolución particionada. Se desactiva solo cuando el perfil NAM activo es End-to-End.
+1. Remuestreo FIR polifásico para modelos entrenados a otra tasa, e inferencia NAM estéreo opcional.
+2. Navegador de modelos (carpetas, Tone3000) y, opcionalmente, IR y modelos incrustados en el preset.
 3. Afinador estroboscópico y Noise Gate.
 4. Wah, Auto-Wah, Octaver; compresor, EQ paramétrico y gráfico, transient shaper.
 5. Modulación: chorus, flanger, phaser, tremolo, rotary, univibe, bitcrusher.

@@ -129,7 +129,7 @@ void KumAmpAudioProcessor::selectScene (int index)
 
 void KumAmpAudioProcessor::timerCallback()
 {
-    engine.collectGarbage();
+    engine.runMessageThreadTasks();
 
     if (const int latency = engine.getLatencySamples(); latency != getLatencySamples())
         setLatencySamples (latency);

@@ -2,6 +2,9 @@
 
 #include "../Graph/BlockFactory.h"
 #include "../Graph/DSPBlock.h"
+#include "../DSP/Amp/NamAmpBlock.h"
+#include "../DSP/Cab/IrLoaderBlock.h"
+#include "../DSP/JuceBlocks.h"
 #include "../DSP/Pitch/PitchShifterBlock.h"
 #include "../DSP/Routing/RoutingParams.h"
 #include "../DSP/Utility/VolumeBlock.h"
@@ -29,7 +32,10 @@ namespace
     juce::Identifier paramKey (const ParamInfo& info) { return juce::Identifier (juce::String ("p_") + info.id); }
 } // namespace
 
-GridEngine::GridEngine() = default;
+GridEngine::GridEngine()
+{
+    registerJuceBlocks();
+}
 GridEngine::~GridEngine() = default;
 
 //==============================================================================
@@ -101,7 +107,7 @@ void GridEngine::applyMacros (const RenderPlan* plan) noexcept
             continue;
         }
 
-        if (value == lastMacroValues[m])
+        if (exactlyEqual (value, lastMacroValues[m]))
             continue;
 
         lastMacroValues[m] = value;
@@ -313,10 +319,51 @@ void GridEngine::assignMacro (int macro, StoreId store, int param, float minValu
     target.version.fetch_add (1, std::memory_order_release);
 }
 
-void GridEngine::collectGarbage()
+void GridEngine::runMessageThreadTasks()
 {
     plans.collectGarbage();
     sceneBanks.collectGarbage();
+
+    for (auto& [id, store] : stores)
+        if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
+            block->collectGarbage();
+
+    updateCabLinks();
+}
+
+bool GridEngine::hasEndToEndUpstream (const GridNode& start) const
+{
+    std::vector<const GridNode*> stack { &start };
+    std::set<NodeId> visited;
+
+    while (! stack.empty())
+    {
+        const auto* node = stack.back();
+        stack.pop_back();
+
+        for (const auto& in : node->inputs)
+        {
+            const auto* source = model.findNode (in.node);
+            if (source == nullptr || ! visited.insert (source->id).second)
+                continue;
+
+            if (source->kind == NodeKind::Block)
+                if (auto* nam = dynamic_cast<NamAmpBlock*> (getStore (source->store).get()))
+                    if (! nam->isBypassed() && nam->getEffectiveProfileKind() == ProfileKind::EndToEnd)
+                        return true;
+
+            stack.push_back (source);
+        }
+    }
+    return false;
+}
+
+void GridEngine::updateCabLinks()
+{
+    for (const auto& node : model.getNodes())
+        if (node.kind == NodeKind::Block)
+            if (auto* ir = dynamic_cast<IrLoaderBlock*> (getStore (node.store).get()))
+                ir->setAutoBypassed (hasEndToEndUpstream (node));
 }
 
 //==============================================================================
@@ -331,9 +378,11 @@ void GridEngine::loadDefaultPreset()
     auto dry       = createStore (BlockType::Volume, "Dry");
     auto harmony   = createStore (BlockType::PitchShifter, "Harmony");
     auto mixer     = createStore (BlockType::Mixer, "Mix");
+    auto amp       = createStore (BlockType::NamAmp, "Amp");
+    auto cab       = createStore (BlockType::IrLoader, "Cab");
     auto output    = createStore (BlockType::Volume, "Output");
 
-    // Input -> Transpose -> Split -> { Dry | Harmony } -> Mix -> Output volume -> Output
+    // Input -> Transpose -> Split -> { Dry | Harmony } -> Mix -> NAM -> IR -> Output volume -> Output
     GridModel m;
     const auto in  = m.addNode (NodeKind::Input, kInvalidStore, 0, 0);
     const auto tr  = m.addNode (NodeKind::Block, transpose->getId(), 0, 1);
@@ -341,15 +390,19 @@ void GridEngine::loadDefaultPreset()
     const auto dr  = m.addNode (NodeKind::Block, dry->getId(), 0, 3);
     const auto ha  = m.addNode (NodeKind::Block, harmony->getId(), 1, 3);
     const auto mx  = m.addNode (NodeKind::Mix, mixer->getId(), 0, 4);
-    const auto ov  = m.addNode (NodeKind::Block, output->getId(), 0, 5);
-    const auto out = m.addNode (NodeKind::Output, kInvalidStore, 0, 6);
+    const auto am  = m.addNode (NodeKind::Block, amp->getId(), 0, 5);
+    const auto cb  = m.addNode (NodeKind::Block, cab->getId(), 0, 6);
+    const auto ov  = m.addNode (NodeKind::Block, output->getId(), 0, 7);
+    const auto out = m.addNode (NodeKind::Output, kInvalidStore, 0, 8);
     m.connect ({ in, 0 }, tr);
     m.connect ({ tr, 0 }, sp);
     m.connect ({ sp, 0 }, dr);
     m.connect ({ sp, 1 }, ha);
     m.connect ({ dr, 0 }, mx);
     m.connect ({ ha, 0 }, mx);
-    m.connect ({ mx, 0 }, ov);
+    m.connect ({ mx, 0 }, am);
+    m.connect ({ am, 0 }, cb);
+    m.connect ({ cb, 0 }, ov);
     m.connect ({ ov, 0 }, out);
 
     // Scene A: clean, harmony off (bypassed = no CPU, and muted at the mixer).
@@ -405,6 +458,10 @@ juce::ValueTree GridEngine::saveState() const
         s.setProperty ("bypass", store->isBypassed(), nullptr);
         for (int p = 0; p < store->getNumParams(); ++p)
             s.setProperty (paramKey (store->getParamInfo (p)), store->getParam (p), nullptr);
+        if (auto* block = dynamic_cast<const DSPBlock*> (store.get()))
+            for (int f = 0; f < block->getNumFileSlots(); ++f)
+                if (const auto path = block->getFilePath (f); ! path.empty())
+                    s.setProperty ("file_" + juce::String (f), juce::String (path), nullptr);
         storesTree.appendChild (s, nullptr);
     }
     root.appendChild (storesTree, nullptr);
@@ -492,9 +549,15 @@ void GridEngine::loadState (const juce::ValueTree& state)
             if (const auto key = paramKey (store->getParamInfo (p)); s.hasProperty (key))
                 store->setParam (p, (float) s.getProperty (key));
 
-        if (prepared)
-            if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
-                block->prepare (sampleRate, maxBlock);
+        if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
+        {
+            for (int f = 0; f < block->getNumFileSlots(); ++f)
+                if (const auto key = "file_" + juce::String (f); s.hasProperty (key))
+                    block->loadFile (f, s.getProperty (key).toString().toStdString());
+
+            if (prepared)
+                block->prepare (sampleRate, maxBlock);   // starts the async loads
+        }
 
         stores[id] = store;
         nextStoreId = std::max (nextStoreId, id + 1);

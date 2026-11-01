@@ -46,7 +46,7 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
 
     setResizable (true, true);
     setResizeLimits (820, 520, 2400, 1600);
-    setSize (1100, 680);
+    setSize (1180, 700);
 
     updateSceneButtons (engine.getActiveScene());
     startTimerHz (30);
@@ -113,7 +113,7 @@ void KumAmpAudioProcessorEditor::resized()
     outputGain.setBounds (gains.removeFromLeft (260));
 
     area.removeFromBottom (8);
-    panel.setBounds (area.removeFromBottom (190));
+    panel.setBounds (area.removeFromBottom (214));
     area.removeFromBottom (8);
     grid.setBounds (area);
 }

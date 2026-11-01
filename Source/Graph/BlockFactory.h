@@ -12,4 +12,9 @@ namespace kumamp
 std::shared_ptr<ParamStore> createStore (BlockType type, StoreId id);
 
 bool isImplemented (BlockType type) noexcept;
+
+/** Blocks living outside the JUCE-free core (NAM, IR...) register here at
+    startup, so the core factory, presets and tests stay framework-agnostic. */
+using StoreCreator = std::shared_ptr<ParamStore> (*) (StoreId);
+void registerStoreCreator (BlockType type, StoreCreator creator);
 } // namespace kumamp

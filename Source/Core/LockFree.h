@@ -111,4 +111,87 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE (RTObjectPublisher)
 };
+
+/**
+    Like RTObjectPublisher, but the audio thread keeps the outgoing object alive
+    while it crossfades to the incoming one (NAM model swaps, etc.).
+
+    Audio thread:  if (beginSwap()) ...; use getCurrent() / getPrevious();
+                   endCrossfade() once the fade is done.
+    Loader thread: publish().
+    Message thread: collectGarbage().
+*/
+template <typename T, int GarbageCapacity = 8>
+class RTCrossfadeSlot
+{
+public:
+    RTCrossfadeSlot() = default;
+    ~RTCrossfadeSlot()
+    {
+        collectGarbage();
+        delete pending.exchange (nullptr);
+        delete previous;
+        delete current;
+    }
+
+    void publish (std::unique_ptr<T> object)
+    {
+        delete pending.exchange (object.release(), std::memory_order_acq_rel);
+    }
+
+    /** Audio thread. True when a new object became current; the old one (if any)
+        is available through getPrevious() until endCrossfade(). */
+    bool beginSwap() noexcept
+    {
+        if (previous != nullptr || pending.load (std::memory_order_relaxed) == nullptr || garbage.getFreeSpace() < 1)
+            return false;
+
+        T* next = pending.exchange (nullptr, std::memory_order_acq_rel);
+        if (next == nullptr)
+            return false;
+
+        previous = current;
+        current = next;
+        return true;
+    }
+
+    void endCrossfade() noexcept
+    {
+        if (previous != nullptr && garbage.push (previous))
+            previous = nullptr;
+    }
+
+    T* getCurrent() const noexcept  { return current; }
+    T* getPrevious() const noexcept { return previous; }
+
+    void collectGarbage()
+    {
+        T* dead = nullptr;
+        while (garbage.pop (dead))
+            delete dead;
+    }
+
+    /** Only while the audio thread is not running (prepareToPlay). */
+    void dropPendingAndPreviousWhileStopped()
+    {
+        delete pending.exchange (nullptr);
+        delete previous;
+        previous = nullptr;
+        collectGarbage();
+    }
+
+private:
+    std::atomic<T*> pending { nullptr };
+    T* current = nullptr;
+    T* previous = nullptr;
+    SpscQueue<T*, GarbageCapacity> garbage;
+
+    JUCE_DECLARE_NON_COPYABLE (RTCrossfadeSlot)
+};
+
+/** Shared background thread for file loading (NAM models, IRs, ...). */
+struct FileLoaderPool
+{
+    juce::ThreadPool pool { juce::ThreadPoolOptions{}.withThreadName ("KumAmp loader").withNumberOfThreads (1) };
+};
 } // namespace kumamp

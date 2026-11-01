@@ -1,4 +1,5 @@
 #include "GridView.h"
+#include "../DSP/Cab/IrLoaderBlock.h"
 
 namespace kumamp
 {
@@ -95,7 +96,9 @@ void GridView::paint (juce::Graphics& g)
     {
         const auto r = nodeBounds (node, layout);
         const auto store = engine.getStore (node.store);
-        const bool bypassed = store != nullptr && node.kind == NodeKind::Block && store->isBypassed();
+        const auto* ir = dynamic_cast<const IrLoaderBlock*> (store.get());
+        const bool decoupled = ir != nullptr && ir->isAutoBypassActive();
+        const bool bypassed = store != nullptr && node.kind == NodeKind::Block && (store->isBypassed() || decoupled);
 
         g.setColour (nodeColour (node).withMultipliedAlpha (bypassed ? 0.35f : 1.0f));
         g.fillRoundedRectangle (r, 6.0f);
@@ -108,7 +111,8 @@ void GridView::paint (juce::Graphics& g)
 
         g.setColour (juce::Colours::white.withAlpha (bypassed ? 0.5f : 0.95f));
         g.setFont (juce::FontOptions (13.0f));
-        g.drawFittedText (nodeLabel (node), r.toNearestInt().reduced (4), juce::Justification::centred, 2);
+        g.drawFittedText (nodeLabel (node) + (decoupled ? "\n(E2E)" : ""), r.toNearestInt().reduced (4),
+                          juce::Justification::centred, 2);
     }
 }
 

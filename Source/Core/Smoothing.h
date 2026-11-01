@@ -1,9 +1,13 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 
 namespace kumamp
 {
+/** Exact comparison, intended (change detection, not numeric tolerance). */
+inline bool exactlyEqual (float a, float b) noexcept { return std::equal_to<float> {} (a, b); }
+
 /** Linear ramp smoother. Allocation-free; setTarget() and next() are RT-safe. */
 class LinearSmoother
 {
@@ -21,7 +25,7 @@ public:
 
     void setTarget (float value) noexcept
     {
-        if (value == target)
+        if (exactlyEqual (value, target))
             return;
 
         target    = value;

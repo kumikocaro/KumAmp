@@ -9,6 +9,7 @@
 #include "DSP/Routing/RoutingParams.h"
 #include "DSP/Utility/VolumeBlock.h"
 #include "Scenes/SceneBank.h"
+#include "Core/RateBridge.h"
 
 #include <cmath>
 #include <cstdio>
@@ -321,6 +322,48 @@ void testPitchShifter (float semitones)
     CHECK (ps.getCurrentDelaySamples() < kRate * 0.030);   // stays low-latency
 }
 
+void testRateBridge (double hostRate)
+{
+    std::printf ("rate bridge %.0f -> 48000 -> %.0f\n", hostRate, hostRate);
+    RateBridge bridge;
+    bridge.prepare (hostRate, 48000.0, kBlock);
+
+    const double f0 = 1000.0;
+    const size_t n = (size_t) hostRate;
+    std::vector<float> x (n), y (n);
+    for (size_t i = 0; i < n; ++i)
+        x[i] = (float) std::sin (2.0 * 3.141592653589793 * f0 * (double) i / hostRate);
+
+    int maxSeen = 0;
+    for (size_t off = 0; off < n; off += kBlock)
+    {
+        const int len = (int) std::min<size_t> (kBlock, n - off);
+        bridge.process (x.data() + off, y.data() + off, len, [&] (float*, int m) { maxSeen = std::max (maxSeen, m); });
+    }
+
+    CHECK (maxSeen <= bridge.getMaxModelBlock());
+    double peak = 0.0, err = 0.0;
+    int zeros = 0;
+    for (size_t i = n / 2; i < n; ++i)
+    {
+        peak = std::max (peak, (double) std::abs (y[i]));
+        zeros += y[i] == 0.0f && x[i] != 0.0f;
+    }
+    // Compare against the analytic sine delayed by the bridge latency (fractional lag search).
+    double best = 1e9;
+    for (double lag = 0.0; lag < 16.0; lag += 0.01)
+    {
+        err = 0.0;
+        for (size_t i = n / 2; i < n; ++i)
+            err += std::abs (y[i] - std::sin (2.0 * 3.141592653589793 * f0 * ((double) i - lag) / hostRate));
+        best = std::min (best, err / (double) (n / 2));
+    }
+    std::printf ("  peak %.4f  mean abs err %.5f  max model block %d\n", peak, best, maxSeen);
+    CHECK (zeros == 0);
+    CHECK_NEAR (peak, 1.0, 0.01);
+    CHECK (best < 0.01);
+}
+
 void testPitchBlockUnityIsTransparent()
 {
     std::puts ("pitch block unity");
@@ -343,6 +386,8 @@ int main()
     testBypassCrossfade();
     testScenes();
     testPitchBlockUnityIsTransparent();
+    testRateBridge (44100.0);
+    testRateBridge (96000.0);
     for (float st : { 12.0f, 7.0f, 3.0f, -5.0f, -12.0f, 0.5f })
         testPitchShifter (st);
 

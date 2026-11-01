@@ -64,16 +64,51 @@ set_target_properties(KumAmpCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ---------------------------------------------------------------------------
 # JUCE
 # ---------------------------------------------------------------------------
+include(FetchContent)
+
 if(KUMAMP_JUCE_PATH)
     add_subdirectory(${KUMAMP_JUCE_PATH} ${CMAKE_BINARY_DIR}/JUCE)
 else()
-    include(FetchContent)
     FetchContent_Declare(JUCE
         GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
         GIT_TAG        8.0.4
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(JUCE)
 endif()
+
+# ---------------------------------------------------------------------------
+# NeuralAmpModelerCore (MIT): inferencia NAM, archivos .nam 0.5 - 0.7 (A1 / A2).
+# Se compila como OBJECT library: las arquitecturas se registran con
+# inicializadores estaticos que una libreria estatica podria descartar.
+# ---------------------------------------------------------------------------
+FetchContent_Declare(NeuralAmpModelerCore
+    GIT_REPOSITORY https://github.com/sdatkinson/NeuralAmpModelerCore.git
+    GIT_TAG        v0.6.0
+    GIT_SHALLOW    TRUE
+    GIT_SUBMODULES "Dependencies/eigen"
+    SOURCE_SUBDIR  __kumamp_no_cmake__)
+FetchContent_MakeAvailable(NeuralAmpModelerCore)
+
+set(NAM_DIR ${neuralampmodelercore_SOURCE_DIR})
+file(GLOB NAM_SOURCES ${NAM_DIR}/NAM/*.cpp ${NAM_DIR}/NAM/*/*.cpp)
+add_library(KumAmpNam OBJECT ${NAM_SOURCES})
+target_include_directories(KumAmpNam SYSTEM PUBLIC
+    ${NAM_DIR} ${NAM_DIR}/Dependencies/eigen ${NAM_DIR}/Dependencies/nlohmann)
+target_compile_definitions(KumAmpNam PUBLIC NAM_SAMPLE_FLOAT NAM_ENABLE_A2_FAST)
+target_compile_options(KumAmpNam PRIVATE -w $<$<CONFIG:Release,RelWithDebInfo>:-O3>)
+if(NOT KUMAMP_UNIVERSAL)
+    target_compile_options(KumAmpNam PRIVATE -mcpu=apple-m1)
+endif()
+set_target_properties(KumAmpNam PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Fuentes que dependen de JUCE y/o NAM. Se compilan en el plugin y en los
+# tests de integracion (los modulos JUCE no se pueden compartir entre targets).
+set(KUMAMP_JUCE_SOURCES
+    Source/Engine/GridEngine.cpp
+    Source/DSP/JuceBlocks.cpp
+    Source/DSP/Amp/NamAmpBlock.cpp
+    Source/DSP/Amp/NamProfileInfo.cpp
+    Source/DSP/Cab/IrLoaderBlock.cpp)
 
 juce_add_plugin(KumAmp
     PRODUCT_NAME                  "KumAmp"
@@ -97,7 +132,7 @@ juce_add_plugin(KumAmp
 target_sources(KumAmp PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
-    Source/Engine/GridEngine.cpp
+    ${KUMAMP_JUCE_SOURCES}
     Source/UI/GridView.cpp
     Source/UI/BlockPanel.cpp)
 
@@ -111,6 +146,7 @@ target_compile_definitions(KumAmp PUBLIC
 target_link_libraries(KumAmp
     PRIVATE
         KumAmpCore
+        KumAmpNam
         kumamp_compile_flags
         juce::juce_audio_utils
         juce::juce_dsp
@@ -127,4 +163,16 @@ if(KUMAMP_BUILD_TESTS)
     add_executable(KumAmpTests Tests/CoreTests.cpp)
     target_link_libraries(KumAmpTests PRIVATE KumAmpCore kumamp_compile_flags)
     add_test(NAME KumAmpCoreTests COMMAND KumAmpTests)
+
+    # Integracion: motor + NAM + IR con JUCE real.
+    juce_add_console_app(KumAmpIntegrationTests PRODUCT_NAME "KumAmpIntegrationTests")
+    target_sources(KumAmpIntegrationTests PRIVATE Tests/IntegrationTests.cpp ${KUMAMP_JUCE_SOURCES})
+    target_compile_definitions(KumAmpIntegrationTests PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models")
+    target_link_libraries(KumAmpIntegrationTests PRIVATE
+        KumAmpCore KumAmpNam kumamp_compile_flags
+        juce::juce_audio_formats juce::juce_dsp juce::juce_data_structures
+        juce::juce_recommended_config_flags)
+    add_test(NAME KumAmpIntegrationTests COMMAND KumAmpIntegrationTests)
 endif()
