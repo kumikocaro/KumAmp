@@ -16,10 +16,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Configure
-        run: cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64
+        # No fixed generator: CMake picks the newest Visual Studio on the runner.
+        run: cmake -S . -B build-win -A x64
 
       - name: Build
         run: cmake --build build-win --config Release --parallel
@@ -53,7 +54,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DKUMAMP_COPY_AFTER_BUILD=OFF

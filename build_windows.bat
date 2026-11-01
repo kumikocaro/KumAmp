@@ -3,7 +3,7 @@ rem ============================================================================
 rem  KumAmp - compilacion + tests + instalador para Windows (x64)
 rem
 rem  Requisitos (una sola vez):
-rem    - Visual Studio 2022 (Community sirve) con "Desarrollo para el escritorio con C++"
+rem    - Visual Studio 2022 o posterior (Community sirve) con "Desarrollo para el escritorio con C++"
 rem    - CMake 3.24 o superior (viene con Visual Studio o desde cmake.org)
 rem    - Git
 rem    - Inno Setup 6 (jrsoftware.org) para generar el instalador
@@ -19,7 +19,8 @@ where git   >nul 2>nul || (echo [ERROR] No se encontro Git. & goto :fail)
 
 echo.
 echo === 1/4  Configurando (descarga JUCE y NeuralAmpModelerCore la primera vez) ===
-cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64 || goto :fail
+rem Sin generador fijo: CMake usa el Visual Studio mas nuevo instalado (2022, 2026...).
+cmake -S . -B build-win -A x64 || goto :fail
 
 echo.
 echo === 2/4  Compilando Release ===
