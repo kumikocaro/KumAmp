@@ -56,8 +56,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DKUMAMP_COPY_AFTER_BUILD=OFF
+      - name: Configure (universal arm64 + x86_64)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DKUMAMP_UNIVERSAL=ON -DKUMAMP_COPY_AFTER_BUILD=OFF
 
       - name: Build
         run: cmake --build build --parallel
@@ -65,15 +65,14 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      - name: Package
+      - name: Installer (.pkg)
         run: |
-          mkdir -p dist
-          cd build/KumAmp_artefacts/Release
-          ditto -c -k --keepParent VST3/KumAmp.vst3 ../../../dist/KumAmp-macOS-VST3.zip
-          ditto -c -k --keepParent AU/KumAmp.component ../../../dist/KumAmp-macOS-AU.zip
-          ditto -c -k --keepParent Standalone/KumAmp.app ../../../dist/KumAmp-macOS-Standalone.zip
+          installer/macos/build_pkg.sh build
+          cp installer/macos/LEEME-Mac.txt dist/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KumAmp-macOS
-          path: dist/*.zip
+          name: KumAmp-macOS-Installer
+          path: |
+            dist/*.pkg
+            dist/LEEME-Mac.txt

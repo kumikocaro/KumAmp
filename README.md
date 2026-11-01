@@ -14,6 +14,24 @@ cmake --build build
 El plugin se copia automáticamente a `~/Library/Audio/Plug-Ins/{VST3,Components}`.
 Opciones: `-DKUMAMP_UNIVERSAL=ON` (arm64 + x86_64), `-DKUMAMP_JUCE_PATH=/ruta/JUCE`, `-DKUMAMP_COPY_AFTER_BUILD=OFF`.
 
+## Instalador de macOS
+
+```bash
+cmake -S . -B build-universal -G Ninja -DCMAKE_BUILD_TYPE=Release -DKUMAMP_UNIVERSAL=ON -DKUMAMP_COPY_AFTER_BUILD=OFF
+cmake --build build-universal
+installer/macos/build_pkg.sh
+```
+
+Genera `dist/KumAmp-<versión>-macOS-Universal.pkg` (Apple Silicon + Intel, macOS 12+):
+- Instala el VST3 en `/Library/Audio/Plug-Ins/VST3`, el AU en `/Library/Audio/Plug-Ins/Components` y la app en `/Applications`.
+- Cada formato se puede elegir por separado.
+- Al instalar el AU, Logic vuelve a escanear los plugins automáticamente.
+
+Para quien lo pruebe hay instrucciones en `installer/macos/LEEME-Mac.txt`.
+
+- **Firma:** por defecto es ad-hoc, así que en otro Mac habrá que abrirlo con clic derecho → Abrir. Para distribuir sin avisos hace falta un Developer ID: con `KUMAMP_SIGN_IDENTITY` / `KUMAMP_INSTALLER_IDENTITY` se firma el `.pkg`, y luego se notariza con `xcrun notarytool`.
+- **En la nube:** en GitHub Actions el job de macOS genera el `.pkg` al lanzarlo a mano o con un tag `v*`.
+
 ## Windows
 
 El proyecto compila en Windows x64 con Visual Studio 2022 (MSVC). Usa runtime estático, así que no hace falta instalar el VC++ Redistributable, y genera **VST3 + Standalone**. AU solo existe en macOS.

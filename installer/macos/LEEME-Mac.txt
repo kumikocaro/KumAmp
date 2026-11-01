@@ -1,0 +1,56 @@
+KumAmp para Mac - como instalarlo y probarlo
+=============================================
+
+Funciona en cualquier Mac con Apple Silicon (M1, M2, M3, M4) o Intel, con macOS 12 Monterey o posterior.
+
+
+1. ABRIR EL INSTALADOR (la primera vez macOS lo bloquea)
+--------------------------------------------------------
+Esta version de prueba no esta notarizada por Apple, asi que al hacer doble clic
+macOS dira que "no se puede abrir porque Apple no puede verificar...". Es normal:
+
+  a) Haz CLIC DERECHO (o Control + clic) sobre KumAmp-...pkg y elige "Abrir".
+     En el aviso, vuelve a pulsar "Abrir".
+
+  b) Si no aparece el boton "Abrir": ve a Ajustes del Sistema > Privacidad y seguridad,
+     baja hasta "Seguridad" y pulsa "Abrir igualmente" junto a KumAmp. Luego abre el .pkg otra vez.
+
+Despues sigue los pasos del instalador (pide la contrasena del Mac porque instala
+en las carpetas de plugins del sistema).
+
+
+2. QUE SE INSTALA
+-----------------
+  - VST3        -> /Library/Audio/Plug-Ins/VST3/KumAmp.vst3     (REAPER, Ableton, Cubase, Studio One...)
+  - Audio Unit  -> /Library/Audio/Plug-Ins/Components/KumAmp.component   (Logic Pro, GarageBand)
+  - Aplicacion  -> Aplicaciones/KumAmp   (sin DAW, directo desde la interfaz de audio)
+
+
+3. ABRIRLO EN EL DAW
+--------------------
+  - REAPER / Ableton / Cubase: si no aparece, vuelve a escanear los plugins.
+  - Logic Pro: si no aparece, Logic Pro > Ajustes > Plug-in Manager > "Reset & Rescan Selection".
+  - Aplicacion: la primera vez pedira permiso de microfono (es la entrada de audio): acepta.
+    En Ajustes (arriba a la izquierda) elige tu interfaz de audio como entrada y salida.
+
+
+4. QUE PROBAR
+-------------
+  - Cargar un modelo .nam en el bloque Amp (clic en Amp > "Cargar Modelo NAM...").
+    Modelos gratis: tone3000.com
+  - Cargar una IR .wav en el bloque Cab (si el modelo NAM es "Amp-Only").
+  - Arrastrar bloques para cambiar el orden de la cadena; clic derecho = encender/apagar.
+  - Cambiar escenas A / B / C / D mientras tocas.
+  - Afinador (barra izquierda, clic para verlo grande).
+  - EQ grafico (clic en EQ, boton de expandir).
+  - Delay con SYNC al tempo del proyecto.
+  - SETTINGS > Guitarra -> MIDI para tocar otro instrumento VST con la guitarra.
+
+
+5. SI ALGO FALLA
+----------------
+Anota: modelo de Mac (Apple > Acerca de este Mac), version de macOS, DAW y version,
+y que paso exactamente (captura de pantalla si se puede).
+
+
+Desinstalar: borra los tres elementos del punto 2.
