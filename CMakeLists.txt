@@ -155,6 +155,15 @@ target_link_libraries(KumAmp
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
+# El codigo compartido del plugin es una libreria estatica: el linker de cada
+# formato descartaria los objetos NAM que solo contienen registros estaticos
+# de arquitecturas (WaveNet, LSTM, A2...). Se enlazan directamente.
+foreach(format VST3 AU Standalone)
+    if(TARGET KumAmp_${format})
+        target_sources(KumAmp_${format} PRIVATE $<TARGET_OBJECTS:KumAmpNam>)
+    endif()
+endforeach()
+
 # ---------------------------------------------------------------------------
 # Tests (solo nucleo, sin JUCE)
 # ---------------------------------------------------------------------------
@@ -175,4 +184,16 @@ if(KUMAMP_BUILD_TESTS)
         juce::juce_audio_formats juce::juce_dsp juce::juce_data_structures
         juce::juce_recommended_config_flags)
     add_test(NAME KumAmpIntegrationTests COMMAND KumAmpIntegrationTests)
+
+    # Carga el VST3 compilado como un DAW y comprueba que un .nam procesa audio.
+    juce_add_console_app(KumAmpHostTest PRODUCT_NAME "KumAmpHostTest")
+    target_sources(KumAmpHostTest PRIVATE Tests/HostTest.cpp)
+    target_compile_definitions(KumAmpHostTest PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1
+        KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
+        KUMAMP_VST3_PATH="$<TARGET_BUNDLE_DIR:KumAmp_VST3>")
+    target_link_libraries(KumAmpHostTest PRIVATE
+        juce::juce_audio_processors juce::juce_recommended_config_flags)
+    add_dependencies(KumAmpHostTest KumAmp_VST3)
+    add_test(NAME KumAmpHostTest COMMAND KumAmpHostTest)
 endif()

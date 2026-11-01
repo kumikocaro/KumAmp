@@ -8,12 +8,17 @@
 
 namespace kumamp
 {
-/** Visualises the routing grid (nodes at row/column, cables between ports)
-    and lets the user select a node. Bypassed blocks are drawn dimmed. */
-class GridView final : public juce::Component
+/** Visualises the routing grid (nodes at row/column, cables between ports).
+    Left-click selects a node, right-click toggles a block's bypass.
+    Bypassed blocks are drawn dimmed. */
+class GridView final : public juce::Component,
+                       public juce::SettableTooltipClient
 {
 public:
-    explicit GridView (GridEngine& engineToShow) : engine (engineToShow) {}
+    explicit GridView (GridEngine& engineToShow) : engine (engineToShow)
+    {
+        setTooltip ("Clic: editar bloque  |  Clic derecho: bypass");
+    }
 
     std::function<void (StoreId)> onNodeSelected;
 

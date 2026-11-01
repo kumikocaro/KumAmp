@@ -111,7 +111,7 @@ void GridView::paint (juce::Graphics& g)
 
         g.setColour (juce::Colours::white.withAlpha (bypassed ? 0.5f : 0.95f));
         g.setFont (juce::FontOptions (13.0f));
-        g.drawFittedText (nodeLabel (node) + (decoupled ? "\n(E2E)" : ""), r.toNearestInt().reduced (4),
+        g.drawFittedText (nodeLabel (node) + (decoupled ? "\n(E2E)" : (bypassed ? "\n(OFF)" : "")), r.toNearestInt().reduced (4),
                           juce::Justification::centred, 2);
     }
 }
@@ -123,6 +123,17 @@ void GridView::mouseDown (const juce::MouseEvent& e)
     {
         if (nodeBounds (node, layout).contains (e.position))
         {
+            // Right-click (or ctrl-click): toggle bypass of audio blocks in place.
+            // Like the panel toggle, it is a live edit until the scene is stored.
+            if (e.mods.isPopupMenu())
+            {
+                if (node.kind == NodeKind::Block)
+                    if (auto store = engine.getStore (node.store))
+                        store->setBypassed (! store->isBypassed());
+                repaint();
+                return;
+            }
+
             selectedNode = node.id;
             if (onNodeSelected)
                 onNodeSelected (node.store);

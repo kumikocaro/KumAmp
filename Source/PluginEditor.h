@@ -33,6 +33,7 @@ private:
     juce::Label inputLabel { {}, "In" }, outputLabel { {}, "Out" };
     juce::AudioProcessorValueTreeState::SliderAttachment inputAttachment, outputAttachment;
 
+    juce::TooltipWindow tooltips { this, 700 };
     kumamp::GridView grid;
     kumamp::BlockPanel panel;
     int shownModelVersion = -1;

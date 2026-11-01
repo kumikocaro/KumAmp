@@ -13,8 +13,8 @@ namespace
         { "level_b",  "Nivel B",    -60.0f,    12.0f,     0.0f, "dB", false },
         { "pan_b",    "Pan B",       -1.0f,     1.0f,     0.0f, "",   false },
         { "enable_b", "IR B activa",  0.0f,     1.0f,     0.0f, "",   true  },
-        { "low_cut",  "Low Cut",     20.0f,   500.0f,    20.0f, "Hz", false },
-        { "high_cut", "High Cut",  2000.0f, 20000.0f, 20000.0f, "Hz", false },
+        { "low_cut",  "Low Cut",     20.0f,   500.0f,    20.0f, "Hz", false },   // 20 Hz = off
+        { "high_cut", "High Cut",  2000.0f, 20000.0f, 20000.0f, "Hz", false },  // 20 kHz = off
         { "mix",      "Mezcla",       0.0f,   100.0f,   100.0f, "%",  false },
         { "auto_e2e", "Auto E2E",     0.0f,     1.0f,     1.0f, "",   true  },
     };
@@ -181,6 +181,10 @@ void IrLoaderBlock::processBlock (float* left, float* right, int numSamples) noe
     mix.setTarget (getParam (Mix) * 0.01f);
     updateFilters();
 
+    // At their end stops the cuts are off, so an empty loader is fully transparent.
+    const bool useLowCut  = getParam (LowCut)  > kParams[LowCut].minValue + 0.5f;
+    const bool useHighCut = getParam (HighCut) < kParams[HighCut].maxValue - 0.5f;
+
     for (int i = 0; i < numSamples; ++i)
     {
         const auto n = (size_t) i;
@@ -193,8 +197,16 @@ void IrLoaderBlock::processBlock (float* left, float* right, int numSamples) noe
             yr += (useB ? bR[n] : 0.0f) * gbr;
         }
 
-        yl = lowPass[0].process (highPass[0].process (yl));
-        yr = lowPass[1].process (highPass[1].process (yr));
+        if (useLowCut)
+        {
+            yl = highPass[0].process (yl);
+            yr = highPass[1].process (yr);
+        }
+        if (useHighCut)
+        {
+            yl = lowPass[0].process (yl);
+            yr = lowPass[1].process (yr);
+        }
 
         const float m = mix.next() * autoWet.next();
         left[i]  = dryL[n] + (yl - dryL[n]) * m;
