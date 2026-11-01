@@ -35,14 +35,22 @@ bool injectModel (juce::AudioPluginInstance& plugin, const char* type, const juc
 
     auto state = juce::ValueTree::fromXml (*pluginXml);
     auto stores = state.getChildWithName ("KumAmpGrid").getChildWithName ("Stores");
+    // Bypass every other block so the amp is the only thing that changes the signal.
     bool found = false;
     for (auto store : stores)
-        if (store.getProperty ("type").toString() == type)
+    {
+        if (! found && store.getProperty ("type").toString() == type)
         {
-            store.setProperty ("file_0", file.getFullPathName(), nullptr);
+            if (file != juce::File())
+                store.setProperty ("file_0", file.getFullPathName(), nullptr);
+            store.setProperty ("bypass", false, nullptr);
             found = true;
-            break;
         }
+        else
+        {
+            store.setProperty ("bypass", true, nullptr);
+        }
+    }
     if (! found)
         return false;
 
@@ -89,7 +97,8 @@ void testModel (juce::AudioPluginFormat& format, const juce::PluginDescription& 
     plugin->prepareToPlay (kRate, kBlock);
     double phase = 0.0;
 
-    // No model yet: the default chain is transparent.
+    // Everything bypassed and no model: the chain must be transparent.
+    CHECK (injectModel (*plugin, "nam_amp", juce::File()));
     double before = 0.0;
     for (int b = 0; b < 40; ++b) before = processAndDiff (*plugin, phase);
 
@@ -115,6 +124,44 @@ void testModel (juce::AudioPluginFormat& format, const juce::PluginDescription& 
 }
 } // namespace
 
+void testMidiOut (juce::AudioPluginFormat& format, const juce::PluginDescription& desc)
+{
+    std::puts ("host: VST3 guitar -> MIDI output");
+    juce::String error;
+    auto plugin = format.createInstanceFromDescription (desc, kRate, kBlock, error);
+    CHECK (plugin != nullptr);
+    if (plugin == nullptr) return;
+    CHECK (plugin->producesMidi());
+
+    for (auto* p : plugin->getParameters())
+        if (p->getName (64) == "Guitar MIDI Out")
+            p->setValueNotifyingHost (1.0f);
+
+    plugin->prepareToPlay (kRate, kBlock);
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    juce::MidiBuffer midi;
+    double phase = 0.0;
+    int noteOns = 0, firstNote = -1;
+    for (int b = 0; b < (int) (kRate / kBlock); ++b)   // 1 s of A2 (110 Hz)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const float v = (float) (0.1 * std::sin (phase) + 0.25 * std::sin (2 * phase + 0.4));
+            buffer.setSample (0, i, v);
+            buffer.setSample (1, i, v);
+            phase += 2.0 * juce::MathConstants<double>::pi * 110.0 / kRate;
+        }
+        midi.clear();
+        plugin->processBlock (buffer, midi);
+        for (const auto m : midi)
+            if (m.getMessage().isNoteOn()) { ++noteOns; if (firstNote < 0) firstNote = m.getMessage().getNoteNumber(); }
+    }
+    std::printf ("  %d note-on(s) from the VST3, first note %d (A2 = 45)\n", noteOns, firstNote);
+    CHECK (noteOns >= 1);
+    CHECK (firstNote == 45);
+    plugin->releaseResources();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -128,6 +175,7 @@ int main()
 
     for (const char* model : { "wavenet.nam", "A2.nam", "lstm.nam" })
         testModel (format, *types[0], model);
+    testMidiOut (format, *types[0]);
 
     std::printf (failures == 0 ? "\nHOST TEST PASSED\n" : "\n%d FAILURE(S)\n", failures);
     return failures == 0 ? 0 : 1;

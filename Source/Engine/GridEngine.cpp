@@ -5,7 +5,12 @@
 #include "../DSP/Amp/NamAmpBlock.h"
 #include "../DSP/Cab/IrLoaderBlock.h"
 #include "../DSP/JuceBlocks.h"
+#include "../DSP/Dynamics/DynamicsBlocks.h"
+#include "../DSP/Modulation/ModulationBlocks.h"
 #include "../DSP/Pitch/PitchShifterBlock.h"
+#include "../DSP/Pitch/PreFxBlocks.h"
+#include "../DSP/Time/DelayBlocks.h"
+#include "../DSP/Time/ReverbBlocks.h"
 #include "../DSP/Routing/RoutingParams.h"
 #include "../DSP/Utility/VolumeBlock.h"
 
@@ -232,9 +237,12 @@ std::shared_ptr<ParamStore> GridEngine::createStore (BlockType type, const juce:
     ++nextStoreId;
     store->setName ((name.isNotEmpty() ? name : juce::String (getBlockTypeInfo (type).displayName)).toStdString());
 
-    if (prepared)
-        if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
+    if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
+    {
+        block->setTempoSource (&tempoBpm);
+        if (prepared)
             block->prepare (sampleRate, maxBlock);
+    }
 
     stores[store->getId()] = store;
     return store;
@@ -248,6 +256,8 @@ std::shared_ptr<ParamStore> GridEngine::getStore (StoreId id) const
 
 bool GridEngine::commitModel (GridModel newModel, juce::String* error)
 {
+    newModel.autoLayout();
+
     if (! prepared)
     {
         std::string message;
@@ -274,6 +284,172 @@ bool GridEngine::commitModel (GridModel newModel, juce::String* error)
     ++modelVersion;
     pruneUnusedStores();
     return true;
+}
+
+NodeId GridEngine::insertBlock (PortRef from, NodeId to, BlockType type, bool parallel, juce::String* error)
+{
+    GridModel m = model;
+    const auto* destination = m.findNode (to);
+    if (destination == nullptr || std::find (destination->inputs.begin(), destination->inputs.end(), from) == destination->inputs.end())
+    {
+        if (error != nullptr) *error = "Conexion inexistente";
+        return kInvalidNode;
+    }
+
+    auto store = createStore (type);
+    if (store == nullptr)
+    {
+        if (error != nullptr) *error = "Tipo de bloque no disponible";
+        return kInvalidNode;
+    }
+
+    const NodeId block = m.addNode (NodeKind::Block, store->getId());
+    const auto before = snapshot();
+
+    if (! parallel)
+    {
+        m.findNode (block)->inputs = { from };
+        m.rewire (from, { block, 0 }, to);
+    }
+    else
+    {
+        auto split = createStore (BlockType::Splitter, "Split");
+        auto mixer = createStore (BlockType::Mixer, "Mix");
+        // Two correlated branches summed at 0 dB would jump +6 dB: start at -6 dB each.
+        mixer->setParam (MixerParam::inputLevelDb (0), -6.0f);
+        mixer->setParam (MixerParam::inputLevelDb (1), -6.0f);
+
+        const NodeId s = m.addNode (NodeKind::Split, split->getId(), 0, 0, 2);
+        const NodeId x = m.addNode (NodeKind::Mix, mixer->getId());
+        // Dry branch on port 0 (stays on the main row), the new block on port 1 (own row).
+        m.findNode (s)->inputs = { from };
+        m.findNode (block)->inputs = { { s, 1 } };
+        m.findNode (x)->inputs = { { s, 0 }, { block, 0 } };
+        m.rewire (from, { x, 0 }, to);
+    }
+
+    if (! commitModel (std::move (m), error))
+    {
+        pruneUnusedStores();   // drop the stores created for the failed edit
+        return kInvalidNode;
+    }
+    pushUndo (before);
+    return block;
+}
+
+bool GridEngine::removeBlock (NodeId node, juce::String* error)
+{
+    GridModel m = model;
+    if (! m.removeBlockAndBridge (node))
+    {
+        if (error != nullptr) *error = "Solo se pueden quitar bloques de audio";
+        return false;
+    }
+    m.collapseEmptyParallels();
+
+    auto before = snapshot();
+    if (! commitModel (std::move (m), error))
+        return false;
+    pushUndo (std::move (before));
+    return true;
+}
+
+bool GridEngine::moveBlock (NodeId node, PortRef from, NodeId to, juce::String* error)
+{
+    const auto* original = model.findNode (node);
+    if (original == nullptr || original->kind != NodeKind::Block)
+    {
+        if (error != nullptr) *error = "Solo se pueden mover bloques de audio";
+        return false;
+    }
+
+    // Dropping a block on its own input or output cable changes nothing.
+    if (from.node == node || to == node)
+        return true;
+
+    GridModel m = model;
+    GridNode moved = *original;
+    if (! m.removeBlockAndBridge (node))
+        return false;
+
+    const auto* destination = m.findNode (to);
+    if (destination == nullptr || std::find (destination->inputs.begin(), destination->inputs.end(), from) == destination->inputs.end())
+    {
+        if (error != nullptr) *error = "Destino no valido";
+        return false;
+    }
+
+    moved.inputs = { from };
+    m.addNodeWithId (moved);
+    m.rewire (from, { node, 0 }, to);
+    m.collapseEmptyParallels();
+
+    auto before = snapshot();
+    if (! commitModel (std::move (m), error))
+        return false;
+    pushUndo (std::move (before));
+    return true;
+}
+
+GridEngine::UndoEntry GridEngine::snapshot() const
+{
+    UndoEntry entry { model, {} };
+    for (const auto& [id, store] : stores)
+        entry.stores.push_back (store);
+    return entry;
+}
+
+bool GridEngine::restore (UndoEntry entry)
+{
+    for (auto& store : entry.stores)
+        stores[store->getId()] = store;
+    nextStoreId = std::max (nextStoreId, stores.empty() ? 1u : stores.rbegin()->first + 1);
+    return commitModel (std::move (entry.model));
+}
+
+bool GridEngine::undo()
+{
+    if (undoStack.empty())
+        return false;
+    auto current = snapshot();
+    auto previous = std::move (undoStack.back());
+    undoStack.pop_back();
+    if (! restore (std::move (previous)))
+        return false;
+    redoStack.push_back (std::move (current));
+    return true;
+}
+
+bool GridEngine::redo()
+{
+    if (redoStack.empty())
+        return false;
+    auto current = snapshot();
+    auto next = std::move (redoStack.back());
+    redoStack.pop_back();
+    if (! restore (std::move (next)))
+        return false;
+    undoStack.push_back (std::move (current));
+    return true;
+}
+
+void GridEngine::pushUndo (UndoEntry entry)
+{
+    undoStack.push_back (std::move (entry));
+    if (undoStack.size() > 50)
+        undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+juce::String GridEngine::getSceneName (int scene) const
+{
+    return scene >= 0 && scene < kNumScenes ? sceneNames[(size_t) scene] : juce::String();
+}
+
+void GridEngine::setSceneName (int scene, const juce::String& name)
+{
+    if (scene >= 0 && scene < kNumScenes)
+        sceneNames[(size_t) scene] = name;
 }
 
 void GridEngine::pruneUnusedStores()
@@ -372,74 +548,65 @@ void GridEngine::loadDefaultPreset()
     stores.clear();
     nextStoreId = 1;
     editedScenes = {};
+    undoStack.clear();
+    redoStack.clear();
+    sceneNames = { "Crunch Ambient", "Lead", "Chorus Clean", "Octave Fuzz" };
 
-    auto transpose = createStore (BlockType::PitchShifter, "Transpose");
-    auto split     = createStore (BlockType::Splitter, "Split");
-    auto dry       = createStore (BlockType::Volume, "Dry");
-    auto harmony   = createStore (BlockType::PitchShifter, "Harmony");
-    auto mixer     = createStore (BlockType::Mixer, "Mix");
-    auto amp       = createStore (BlockType::NamAmp, "Amp");
-    auto cab       = createStore (BlockType::IrLoader, "Cab");
-    auto output    = createStore (BlockType::Volume, "Output");
+    auto wah    = createStore (BlockType::Wah, "Wah");
+    auto oct    = createStore (BlockType::Octaver, "Oct");
+    auto amp    = createStore (BlockType::NamAmp, "Amp");
+    auto cab    = createStore (BlockType::IrLoader, "Cab");
+    auto eq     = createStore (BlockType::ParametricEq, "EQ");
+    auto chorus = createStore (BlockType::Chorus, "Chorus");
+    auto delay  = createStore (BlockType::DigitalDelay, "Delay");
+    auto reverb = createStore (BlockType::PlateReverb, "Reverb");
 
-    // Input -> Transpose -> Split -> { Dry | Harmony } -> Mix -> NAM -> IR -> Output volume -> Output
+    // IN -> Wah -> Oct -> Amp -> Cab -> EQ -> Chorus -> Delay -> Reverb -> OUT
     GridModel m;
-    const auto in  = m.addNode (NodeKind::Input, kInvalidStore, 0, 0);
-    const auto tr  = m.addNode (NodeKind::Block, transpose->getId(), 0, 1);
-    const auto sp  = m.addNode (NodeKind::Split, split->getId(), 0, 2, 2);
-    const auto dr  = m.addNode (NodeKind::Block, dry->getId(), 0, 3);
-    const auto ha  = m.addNode (NodeKind::Block, harmony->getId(), 1, 3);
-    const auto mx  = m.addNode (NodeKind::Mix, mixer->getId(), 0, 4);
-    const auto am  = m.addNode (NodeKind::Block, amp->getId(), 0, 5);
-    const auto cb  = m.addNode (NodeKind::Block, cab->getId(), 0, 6);
-    const auto ov  = m.addNode (NodeKind::Block, output->getId(), 0, 7);
-    const auto out = m.addNode (NodeKind::Output, kInvalidStore, 0, 8);
-    m.connect ({ in, 0 }, tr);
-    m.connect ({ tr, 0 }, sp);
-    m.connect ({ sp, 0 }, dr);
-    m.connect ({ sp, 1 }, ha);
-    m.connect ({ dr, 0 }, mx);
-    m.connect ({ ha, 0 }, mx);
-    m.connect ({ mx, 0 }, am);
-    m.connect ({ am, 0 }, cb);
-    m.connect ({ cb, 0 }, ov);
-    m.connect ({ ov, 0 }, out);
-
-    // Scene A: clean, harmony off (bypassed = no CPU, and muted at the mixer).
-    harmony->setParam (PitchShifterBlock::Semitones, 7.0f);
-    harmony->setBypassed (true);
-    mixer->setParam (MixerParam::inputLevelDb (1), -60.0f);
-
+    NodeId previous = m.addNode (NodeKind::Input);
+    for (const auto& store : { wah, oct, amp, cab, eq, chorus, delay, reverb })
+    {
+        const NodeId node = m.addNode (NodeKind::Block, store->getId());
+        m.connect ({ previous, 0 }, node);
+        previous = node;
+    }
+    m.connect ({ previous, 0 }, m.addNode (NodeKind::Output));
     commitModel (std::move (m));
 
+    auto setScene = [&] (bool wahOn, bool octOn, bool chorusOn, bool delayOn, float delayMix, float delayMs,
+                         float reverbMix, float midBoostDb)
+    {
+        wah->setBypassed (! wahOn);
+        oct->setBypassed (! octOn);
+        chorus->setBypassed (! chorusOn);
+        delay->setBypassed (! delayOn);
+        delay->setParam (DigitalDelayBlock::Mix, delayMix);
+        delay->setParam (DigitalDelayBlock::TimeMs, delayMs);
+        delay->setParam (DigitalDelayBlock::Feedback, 30.0f);
+        reverb->setParam (PlateReverbBlock::Mix, reverbMix);
+        using EQ = ParametricEqBlock;
+        eq->setParam (EQ::bandParam (0, EQ::BandOn), 1.0f);          // low cut 80 Hz, 24 dB/oct
+        eq->setParam (EQ::bandParam (2, EQ::BandOn), 1.0f);          // mid bell for the lead push
+        eq->setParam (EQ::bandParam (2, EQ::BandFreq), 800.0f);
+        eq->setParam (EQ::bandParam (2, EQ::BandGain), midBoostDb);
+        oct->setParam (OctaverBlock::SubDb, -3.0f);
+        oct->setParam (OctaverBlock::UpDb, -12.0f);
+    };
+
+    setScene (false, false, false, true, 25.0f, 420.0f, 22.0f, 0.0f);   // A: Crunch Ambient
     storeScene (0);
-
-    // Scene B: whole step down.
-    transpose->setParam (PitchShifterBlock::Semitones, -2.0f);
+    setScene (false, false, false, true, 32.0f, 480.0f, 18.0f, 3.0f);   // B: Lead (mid push)
     storeScene (1);
-
-    // Scene C: standard tuning + fifth harmony, spread in stereo.
-    transpose->setParam (PitchShifterBlock::Semitones, 0.0f);
-    harmony->setBypassed (false);
-    mixer->setParam (MixerParam::inputLevelDb (1), -4.0f);
-    mixer->setParam (MixerParam::inputPan (0), -0.35f);
-    mixer->setParam (MixerParam::inputPan (1), 0.35f);
+    setScene (false, false, true, false, 25.0f, 420.0f, 30.0f, 0.0f);   // C: Chorus Clean
     storeScene (2);
-
-    // Scene D: octave up.
-    harmony->setBypassed (true);
-    mixer->setParam (MixerParam::inputLevelDb (1), -60.0f);
-    mixer->setParam (MixerParam::inputPan (0), 0.0f);
-    mixer->setParam (MixerParam::inputPan (1), 0.0f);
-    transpose->setParam (PitchShifterBlock::Semitones, 12.0f);
+    setScene (false, true, false, true, 20.0f, 380.0f, 20.0f, 0.0f);    // D: Octave Fuzz
     storeScene (3);
 
-    // Back to scene A values.
     SceneBank::apply (editedScenes.scenes[0], [this] (StoreId id) { return getStore (id).get(); });
 
-    // Macro 1 = whammy pedal on the transposer (0..+12 st).
-    assignMacro (0, transpose->getId(), PitchShifterBlock::Semitones, 0.0f, 12.0f);
-    juce::ignoreUnused (dry, output);
+    // Macro 1 = expression pedal on the wah.
+    assignMacro (0, wah->getId(), WahBlock::Position, 0.0f, 100.0f);
+    juce::ignoreUnused (amp, cab);
 }
 
 //==============================================================================
@@ -492,6 +659,7 @@ juce::ValueTree GridEngine::saveState() const
         juce::ValueTree sc (kSceneTag);
         sc.setProperty ("index", i, nullptr);
         sc.setProperty ("valid", scene.valid, nullptr);
+        sc.setProperty ("name", sceneNames[(size_t) i], nullptr);
         for (int k = 0; k < scene.numStores; ++k)
         {
             const auto& snap = scene.stores[(size_t) k];
@@ -534,6 +702,9 @@ void GridEngine::loadState (const juce::ValueTree& state)
     stores.clear();
     nextStoreId = 1;
     editedScenes = {};
+    undoStack.clear();
+    redoStack.clear();
+    sceneNames = {};
 
     for (const auto& s : state.getChildWithName (kStoresTag))
     {
@@ -551,6 +722,7 @@ void GridEngine::loadState (const juce::ValueTree& state)
 
         if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
         {
+            block->setTempoSource (&tempoBpm);
             for (int f = 0; f < block->getNumFileSlots(); ++f)
                 if (const auto key = "file_" + juce::String (f); s.hasProperty (key))
                     block->loadFile (f, s.getProperty (key).toString().toStdString());
@@ -590,6 +762,7 @@ void GridEngine::loadState (const juce::ValueTree& state)
 
         auto& scene = editedScenes.scenes[(size_t) index];
         scene.valid = sc.getProperty ("valid");
+        sceneNames[(size_t) index] = sc.getProperty ("name").toString();
         for (const auto& sn : sc)
         {
             if (scene.numStores >= kMaxStores)

@@ -1,119 +1,279 @@
 #include "PluginEditor.h"
 
+void KumAmpAudioProcessorEditor::Placeholder::paint (juce::Graphics& g)
+{
+    g.fillAll (kumamp::theme::background);
+    kumamp::theme::drawCard (g, getLocalBounds().toFloat());
+    g.setColour (kumamp::theme::text);
+    g.setFont (juce::FontOptions (26.0f, juce::Font::bold));
+    g.drawText (title, getLocalBounds().withTrimmedBottom (40), juce::Justification::centred);
+    g.setColour (kumamp::theme::textDim);
+    g.setFont (juce::FontOptions (16.0f));
+    g.drawText (juce::CharPointer_UTF8 ("Pr\xc3\xb3ximamente. Por ahora todo se edita desde GRID."),
+                getLocalBounds().withTrimmedTop (40), juce::Justification::centred);
+}
+
 KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     : AudioProcessorEditor (&p),
       kumProcessor (p),
       engine (p.getEngine()),
-      inputAttachment (p.getParameters(), "input_gain", inputGain),
-      outputAttachment (p.getParameters(), "output_gain", outputGain),
-      grid (p.getEngine())
+      sidebar (p.getParameters()),
+      grid (p.getEngine()),
+      settings (p.getParameters())
 {
-    title.setText ("KumAmp", juce::dontSendNotification);
-    title.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-    addAndMakeVisible (title);
+    setLookAndFeel (&lookAndFeel);
 
-    status.setJustificationType (juce::Justification::centredRight);
-    addAndMakeVisible (status);
+    header.onTabChanged = [this] (int tab) { showTab (tab); };
+    addAndMakeVisible (header);
 
-    const char* names[] = { "A", "B", "C", "D" };
-    for (int i = 0; i < kumamp::kNumScenes; ++i)
+    sidebar.onTunerClicked = [this] { showTuner (! tunerView.isVisible()); };
+    addAndMakeVisible (sidebar);
+
+    sceneBar.onSceneSelected = [this] (int scene) { kumProcessor.selectScene (scene); };
+    sceneBar.onNameEdited    = [this] (int scene, const juce::String& name) { engine.setSceneName (scene, name); };
+    sceneBar.onStore         = [this]
     {
-        auto& b = sceneButtons[(size_t) i];
-        b.setButtonText (names[i]);
-        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff8e5bd6));
-        b.onClick = [this, i] { kumProcessor.selectScene (i); };
-        addAndMakeVisible (b);
-    }
-
-    storeButton.onClick = [this] { engine.storeScene (engine.getActiveScene()); };
-    addAndMakeVisible (storeButton);
-
-    panicButton.onClick = [this] { engine.pushCommand ({ kumamp::EngineCommand::Type::ResetAllBlocks, 0 }); };
-    addAndMakeVisible (panicButton);
-
-    for (auto* s : { &inputGain, &outputGain })
-    {
-        s->setTextValueSuffix (" dB");
-        s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 20);
-        addAndMakeVisible (s);
-    }
-    addAndMakeVisible (inputLabel);
-    addAndMakeVisible (outputLabel);
+        engine.storeScene (engine.getActiveScene());
+        showToast ("Escena " + juce::String::charToString ((juce::juce_wchar) ('A' + engine.getActiveScene())) + " guardada");
+    };
+    sceneBar.onUndo = [this] { engine.undo(); };
+    sceneBar.onRedo = [this] { engine.redo(); };
+    sceneBar.onMenu = [this] (juce::Component& source) { showMainMenu (source); };
+    addAndMakeVisible (sceneBar);
 
     grid.onNodeSelected = [this] (kumamp::StoreId id) { panel.setStore (engine.getStore (id)); };
+    grid.onError = [this] (const juce::String& message) { showToast ("Error: " + message); };
     addAndMakeVisible (grid);
+
+    palette.onGroupClicked = [this] (int group, juce::Component& source)
+    {
+        const auto& types = kumamp::theme::paletteGroups()[(size_t) group].types;
+        if (types.size() == 1)
+            grid.insert (types.front(), grid.defaultInsertTarget(), false);
+        else
+            grid.showBlockMenu (group, grid.defaultInsertTarget(), source.getScreenBounds(), false);
+    };
+    palette.onAddClicked = [this] (juce::Component& source)
+    {
+        grid.showBlockMenu (-1, grid.defaultInsertTarget(), source.getScreenBounds(), true);
+    };
+    addAndMakeVisible (palette);
+
+    panel.onRemove = [this] { grid.removeSelected(); };
+    panel.onExpandEq = [this] (std::shared_ptr<kumamp::ParamStore> eqStore) { showEqOverlay (std::move (eqStore)); };
     addAndMakeVisible (panel);
 
-    setResizable (true, true);
-    setResizeLimits (820, 520, 2400, 1600);
-    setSize (1180, 700);
+    tunerView.readingSource      = [this] { return kumProcessor.getTuner().getLatest(); };
+    tunerView.onModeChanged      = [this] (int mode) { setParameter ("tuner_mode", (float) mode); };
+    tunerView.onMuteChanged      = [this] (bool mute) { setParameter ("tuner_mute", mute ? 1.0f : 0.0f); };
+    tunerView.onReferenceChanged = [this] (float hz) { setParameter ("tuner_reference", hz); };
+    tunerView.onClose            = [this] { showTuner (false); };
+    addChildComponent (tunerView);
+    addChildComponent (placeholder);
+    settings.noteSource     = [this] { return kumProcessor.getMidiOutNote(); };
+    settings.velocitySource = [this] { return kumProcessor.getMidiOutVelocity(); };
+    settings.bendSource     = [this] { return kumProcessor.getMidiOutBend(); };
+    addChildComponent (settings);
 
-    updateSceneButtons (engine.getActiveScene());
+    toast.setJustificationType (juce::Justification::centred);
+    toast.setColour (juce::Label::backgroundColourId, kumamp::theme::panelRaised);
+    toast.setColour (juce::Label::outlineColourId, kumamp::theme::border);
+    toast.setFont (juce::FontOptions (15.0f));
+    addChildComponent (toast);
+
+    // The compact tuner in the sidebar is always live while the editor is open.
+    kumProcessor.getTuner().setListening (true);
+
+    setResizable (true, true);
+    setResizeLimits (1240, 760, 2600, 1600);
+    setSize (1500, 880);
     startTimerHz (30);
 }
 
 KumAmpAudioProcessorEditor::~KumAmpAudioProcessorEditor()
 {
     stopTimer();
+    kumProcessor.getTuner().setListening (false);
+    kumProcessor.setTunerViewOpen (false);   // never leave the output muted
+    setLookAndFeel (nullptr);
 }
 
-void KumAmpAudioProcessorEditor::updateSceneButtons (int activeScene)
+void KumAmpAudioProcessorEditor::showTuner (bool shouldShow)
 {
-    for (int i = 0; i < kumamp::kNumScenes; ++i)
-        sceneButtons[(size_t) i].setToggleState (i == activeScene, juce::dontSendNotification);
+    if (shouldShow)
+        showTab (0);
+    tunerView.setVisible (shouldShow);
+    kumProcessor.setTunerViewOpen (shouldShow);
+    if (shouldShow)
+        tunerView.toFront (false);
+}
+
+void KumAmpAudioProcessorEditor::showEqOverlay (std::shared_ptr<kumamp::ParamStore> eqStore)
+{
+    eqOverlay = std::make_unique<kumamp::EqView> (false);
+    eqOverlay->setBlock (std::move (eqStore));
+    eqOverlay->onClose = [this]
+    {
+        // Deferred: don't delete the view from inside its own button callback.
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<KumAmpAudioProcessorEditor> (this)]
+                                         { if (safe != nullptr) safe->eqOverlay.reset(); });
+    };
+    eqOverlay->setBounds (centreColumn);
+    addAndMakeVisible (*eqOverlay);
+    eqOverlay->toFront (false);
+}
+
+void KumAmpAudioProcessorEditor::showTab (int tab)
+{
+    header.setActiveTab (tab);
+    const char* titles[] = { "", "PRESETS", "SNAPSHOTS", "IRs", "SETTINGS" };
+    placeholder.title = titles[juce::jlimit (0, 4, tab)];
+    placeholder.setVisible (tab != 0 && tab != 4);
+    settings.setVisible (tab == 4);
+    if (tab == 4)
+        settings.toFront (false);
+    if (tab != 0)
+    {
+        tunerView.setVisible (false);
+        kumProcessor.setTunerViewOpen (false);
+        if (tab != 4)
+            placeholder.toFront (false);
+        placeholder.repaint();
+    }
+}
+
+void KumAmpAudioProcessorEditor::showToast (const juce::String& message)
+{
+    toast.setText (message, juce::dontSendNotification);
+    toast.setVisible (true);
+    toast.toFront (false);
+    toastUntil = juce::Time::getMillisecondCounter() + 3000;
+}
+
+void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "Afinador grande", true, tunerView.isVisible());
+    menu.addItem (2, "Deshacer", engine.canUndo());
+    menu.addItem (3, "Rehacer", engine.canRedo());
+    menu.addSeparator();
+    menu.addItem (4, "Reset DSP (limpiar colas y estados)");
+    menu.addItem (5, "Cargar preset por defecto");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&source),
+                        [safe = juce::Component::SafePointer<KumAmpAudioProcessorEditor> (this)] (int result)
+                        {
+                            if (safe == nullptr) return;
+                            switch (result)
+                            {
+                                case 1: safe->showTuner (! safe->tunerView.isVisible()); break;
+                                case 2: safe->engine.undo(); break;
+                                case 3: safe->engine.redo(); break;
+                                case 4: safe->engine.pushCommand ({ kumamp::EngineCommand::Type::ResetAllBlocks, 0 }); break;
+                                case 5: safe->engine.loadDefaultPreset(); safe->grid.selectNode (kumamp::kInvalidNode); break;
+                                default: break;
+                            }
+                        });
+}
+
+void KumAmpAudioProcessorEditor::setParameter (const juce::String& id, float value)
+{
+    if (auto* param = kumProcessor.getParameters().getParameter (id))
+    {
+        param->beginChangeGesture();
+        param->setValueNotifyingHost (param->convertTo0to1 (value));
+        param->endChangeGesture();
+    }
+}
+
+int KumAmpAudioProcessorEditor::groupOfSelectedBlock() const
+{
+    const auto store = engine.getStore (panel.getStoreId());
+    if (store == nullptr)
+        return -1;
+    const auto& groups = kumamp::theme::paletteGroups();
+    for (int g = 0; g < (int) groups.size(); ++g)
+        for (auto type : groups[(size_t) g].types)
+            if (type == store->getType())
+                return g;
+    return -1;
 }
 
 void KumAmpAudioProcessorEditor::timerCallback()
 {
     kumamp::EngineEvent event;
-    while (engine.popEvent (event))
-        if (event.type == kumamp::EngineEvent::Type::SceneChanged)
-            updateSceneButtons (event.value);
+    while (engine.popEvent (event)) {}   // drained; state is read directly below
+
+    header.setStats (kumProcessor.getCpuLoad(), kumProcessor.getSampleRate(), kumProcessor.getCurrentBlockSize(),
+                     kumProcessor.isAudioRunning(), engine.getTempo());
+
+    sidebar.setTunerReading (kumProcessor.getTuner().getLatest());
+    sidebar.pushInputLevel (kumProcessor.takeInputPeak (0), kumProcessor.takeInputPeak (1));
+    panel.getOutputMeter().push (kumProcessor.takeOutputPeak (0), kumProcessor.takeOutputPeak (1));
+
+    const int scene = engine.getActiveScene();
+    sceneBar.setActiveScene (scene);
+    sceneBar.setSceneName (engine.getSceneName (scene));
+    sceneBar.setUndoState (engine.canUndo(), engine.canRedo());
 
     if (engine.getModelVersion() != shownModelVersion)
     {
-        // Preset loaded or grid edited: the selected store may no longer exist.
+        // Preset loaded, grid edited or undo: the selected store may no longer exist.
         shownModelVersion = engine.getModelVersion();
-        panel.setStore (engine.getStore (panel.getStoreId()));
+        const auto store = engine.getStore (panel.getStoreId());
+        if (store == nullptr)
+            grid.selectNode (kumamp::kInvalidNode);
+        else
+            panel.setStore (store);
     }
 
-    const double sr = kumProcessor.getSampleRate() > 0.0 ? kumProcessor.getSampleRate() : 48000.0;
-    status.setText ("Escena " + juce::String::charToString ((juce::juce_wchar) ('A' + engine.getActiveScene()))
-                        + "   |   PDC " + juce::String (1000.0 * engine.getLatencySamples() / sr, 2) + " ms",
-                    juce::dontSendNotification);
+    // The large EQ closes if its block left the grid or another block got selected.
+    if (eqOverlay != nullptr)
+        if (const auto selected = engine.getStore (panel.getStoreId()); selected == nullptr || selected->getType() != kumamp::BlockType::ParametricEq)
+            eqOverlay.reset();
 
     panel.refresh();
     grid.repaint();
+    palette.setHighlightedGroup (groupOfSelectedBlock());
+
+    auto& params = kumProcessor.getParameters();
+    tunerView.setSettings ((int) params.getRawParameterValue ("tuner_mode")->load(),
+                           params.getRawParameterValue ("tuner_mute")->load() > 0.5f,
+                           params.getRawParameterValue ("tuner_reference")->load());
+
+    if (toast.isVisible() && juce::Time::getMillisecondCounter() > toastUntil)
+        toast.setVisible (false);
 }
 
 void KumAmpAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff0f1115));
+    g.fillAll (kumamp::theme::background);
+    kumamp::theme::drawCard (g, centreCard.toFloat());
 }
 
 void KumAmpAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced (12);
+    auto area = getLocalBounds();
+    header.setBounds (area.removeFromTop (84));
+    area.reduce (16, 16);
 
-    auto header = area.removeFromTop (40);
-    title.setBounds (header.removeFromLeft (140));
-    for (auto& b : sceneButtons)
-        b.setBounds (header.removeFromLeft (48).reduced (3));
-    header.removeFromLeft (8);
-    storeButton.setBounds (header.removeFromLeft (130).reduced (3));
-    panicButton.setBounds (header.removeFromLeft (100).reduced (3));
-    status.setBounds (header);
+    panel.setBounds (area.removeFromBottom (232));
+    area.removeFromBottom (16);
 
-    area.removeFromTop (8);
-    auto gains = area.removeFromBottom (30);
-    inputLabel.setBounds (gains.removeFromLeft (30));
-    inputGain.setBounds (gains.removeFromLeft (260));
-    gains.removeFromLeft (20);
-    outputLabel.setBounds (gains.removeFromLeft (36));
-    outputGain.setBounds (gains.removeFromLeft (260));
+    sidebar.setBounds (area.removeFromLeft (310));
+    area.removeFromLeft (16);
 
-    area.removeFromBottom (8);
-    panel.setBounds (area.removeFromBottom (214));
-    area.removeFromBottom (8);
-    grid.setBounds (area);
+    const auto centre = area;
+    palette.setBounds (area.removeFromBottom (96));
+    area.removeFromBottom (14);
+    centreCard = area;
+    sceneBar.setBounds (area.removeFromTop (62));
+    grid.setBounds (area.reduced (2));
+
+    centreColumn = centre;
+    tunerView.setBounds (centre);
+    if (eqOverlay != nullptr)
+        eqOverlay->setBounds (centre);
+    placeholder.setBounds (centre);
+    settings.setBounds (centre);
+    toast.setBounds (centreCard.withSizeKeepingCentre (420, 40).withY (centreCard.getBottom() - 56));
 }

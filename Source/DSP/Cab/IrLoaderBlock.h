@@ -36,6 +36,11 @@ public:
     bool loadFile (int slot, const std::string& path) override;
     std::string getFilePath (int slot) const override;
     std::string getStatusText() const override;
+    std::vector<std::string> getInfoChips() const override
+    {
+        if (isAutoBypassActive()) return { "Desacoplado (NAM E2E)" };
+        return { getParam (EnableB) > 0.5f ? "Dual A+B" : "IR A" };
+    }
 
     /** Any thread (engine). */
     void setAutoBypassed (bool shouldBypass) noexcept { autoBypassed.store (shouldBypass, std::memory_order_relaxed); }

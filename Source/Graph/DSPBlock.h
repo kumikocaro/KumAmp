@@ -43,6 +43,20 @@ public:
     virtual bool loadFile (int /*slot*/, const std::string& /*path*/) { return false; }
     virtual std::string getFilePath (int /*slot*/) const { return {}; }
     virtual std::string getStatusText() const { return {}; }
+    /** Short tags shown as chips in the block panel ("Amp-Only", "NAM 0.7"...). */
+    virtual std::vector<std::string> getInfoChips() const { return {}; }
+    /** Replaces a parameter's displayed value (e.g. a tempo-synced time:
+        "1/4 · 500 ms"); empty = show the value normally. The UI also locks the
+        control while an override is active. */
+    virtual std::string getDisplayOverride (int /*param*/) const { return {}; }
+
+    //== Host tempo (shared by the engine; any thread) ============================
+    void setTempoSource (const std::atomic<double>* bpm) noexcept { tempoSource = bpm; }
+    double getTempoBpm() const noexcept
+    {
+        const double bpm = tempoSource != nullptr ? tempoSource->load (std::memory_order_relaxed) : 120.0;
+        return bpm > 1.0 ? bpm : 120.0;
+    }
 
     /** Message thread: delete objects retired by the audio thread. */
     virtual void collectGarbage() {}
@@ -52,11 +66,16 @@ public:
     int    getMaxBlockSize() const noexcept { return maxBlock; }
 
 protected:
+    /** Return true to receive processBlock() even while bypassed and implement
+        bypass yourself (delays / reverbs: mute the input, let the tail ring). */
+    virtual bool handlesBypassInternally() const noexcept { return false; }
+
     virtual void prepareBlock (double sampleRate, int maxBlockSize) = 0;
     virtual void resetBlock() noexcept = 0;
     virtual void processBlock (float* left, float* right, int numSamples) noexcept = 0;
 
 private:
+    const std::atomic<double>* tempoSource = nullptr;
     std::vector<float> dryLeft, dryRight;
     FixedDelay dryDelay;
     double currentSampleRate = 48000.0;

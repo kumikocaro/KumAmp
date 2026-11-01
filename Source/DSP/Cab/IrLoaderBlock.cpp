@@ -2,6 +2,7 @@
 #include "../../Core/DspMath.h"
 
 #include <iterator>
+#include <cstring>
 
 namespace kumamp
 {
@@ -12,11 +13,11 @@ namespace
         { "pan_a",    "Pan A",       -1.0f,     1.0f,     0.0f, "",   false },
         { "level_b",  "Nivel B",    -60.0f,    12.0f,     0.0f, "dB", false },
         { "pan_b",    "Pan B",       -1.0f,     1.0f,     0.0f, "",   false },
-        { "enable_b", "IR B activa",  0.0f,     1.0f,     0.0f, "",   true  },
+        { "enable_b", "IR B activa",  0.0f,     1.0f,     0.0f, "Off|On", true },
         { "low_cut",  "Low Cut",     20.0f,   500.0f,    20.0f, "Hz", false },   // 20 Hz = off
         { "high_cut", "High Cut",  2000.0f, 20000.0f, 20000.0f, "Hz", false },  // 20 kHz = off
         { "mix",      "Mezcla",       0.0f,   100.0f,   100.0f, "%",  false },
-        { "auto_e2e", "Auto E2E",     0.0f,     1.0f,     1.0f, "",   true  },
+        { "auto_e2e", "Auto E2E",     0.0f,     1.0f,     1.0f, "Off|On", true },
     };
     static_assert (std::size (kParams) == IrLoaderBlock::NumParams);
 } // namespace

@@ -1,11 +1,13 @@
 #pragma once
 
 #include "NamProfileInfo.h"
+#include "../../Core/Biquad.h"
 #include "../../Core/LockFree.h"
 #include "../../Core/RateBridge.h"
 #include "../../Core/Smoothing.h"
 #include "../../Graph/DSPBlock.h"
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -30,7 +32,7 @@ struct NamModel
 
     std::unique_ptr<nam::DSP> dsp;
     NamProfileInfo info;
-    std::string path;
+    std::string path, version, architecture;
     double trainedRate = -1.0, runRate = 48000.0;
     float normalisationGain = 1.0f;   // brings the model to -18 dB loudness
     RateBridge bridge;
@@ -50,7 +52,7 @@ struct NamModel
 class NamAmpBlock final : public DSPBlock
 {
 public:
-    enum Param { InputDb, OutputDb, Normalize, ProfileMode, NumParams };
+    enum Param { InputDb, Bass, Mid, Treble, Presence, OutputDb, Normalize, ProfileMode, NumParams };
     enum ProfileModeValue { ModeAuto = 0, ModeAmpOnly = 1, ModeEndToEnd = 2 };
 
     explicit NamAmpBlock (StoreId id);
@@ -62,6 +64,7 @@ public:
     bool loadFile (int slot, const std::string& path) override;
     std::string getFilePath (int slot) const override;
     std::string getStatusText() const override;
+    std::vector<std::string> getInfoChips() const override;
     void collectGarbage() override;
 
     /** Any thread. Unknown metadata counts as Amp-Only. */
@@ -80,7 +83,8 @@ private:
         std::atomic<int> generation { 0 };
         std::atomic<int> detectedKind { (int) ProfileKind::Unknown };
         std::mutex lock;          // loader <-> message thread only, never the audio thread
-        std::string requestedPath, status;
+        std::string requestedPath, status, version, architecture;
+        bool resampled = false;
     };
 
     void startLoad();
@@ -88,7 +92,11 @@ private:
     std::shared_ptr<Shared> shared;
     juce::SharedResourcePointer<FileLoaderPool> loader;
 
+    void updateToneStack (bool force) noexcept;
+
     std::vector<float> mono, wetCurrent, wetPrevious, dryLeft, dryRight;
+    std::array<Biquad, 4> toneStack;            // bass, mid, treble, presence (post-model)
+    std::array<float, 4> toneValues { -1.0f, -1.0f, -1.0f, -1.0f };
     LinearSmoother inputGain, outputGain;
     int fadePos = 0, fadeLength = 1;
     bool fading = false;

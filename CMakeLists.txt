@@ -1,17 +1,22 @@
 cmake_minimum_required(VERSION 3.24)
 
 # ---------------------------------------------------------------------------
-# Plataforma: macOS, Apple Silicon nativo por defecto.
+# Plataformas: macOS (Apple Silicon nativo por defecto) y Windows x64 (MSVC).
 # Estas variables deben fijarse ANTES de project().
 # ---------------------------------------------------------------------------
-option(KUMAMP_UNIVERSAL "Compilar binario universal (arm64;x86_64) en lugar de arm64 nativo" OFF)
+option(KUMAMP_UNIVERSAL "macOS: binario universal (arm64;x86_64) en lugar de arm64 nativo" OFF)
 
-if(KUMAMP_UNIVERSAL)
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
-else()
-    set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "" FORCE)
+if(APPLE)
+    if(KUMAMP_UNIVERSAL)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
+    else()
+        set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "" FORCE)
+    endif()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Version minima de macOS")
 endif()
-set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Version minima de macOS")
+
+# Windows: runtime de MSVC estatico -> el usuario no necesita instalar el VC++ Redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 project(KumAmp VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -25,7 +30,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(KUMAMP_BUILD_TESTS       "Compilar los tests del nucleo DSP (sin JUCE)" ON)
-option(KUMAMP_COPY_AFTER_BUILD  "Copiar VST3/AU a ~/Library/Audio/Plug-Ins tras compilar" ON)
+# En Windows copiar a "Program Files\Common Files\VST3" exige permisos de administrador:
+# alli se instala con el instalador (installer/KumAmp.iss).
+if(APPLE)
+    option(KUMAMP_COPY_AFTER_BUILD "Copiar VST3/AU a ~/Library/Audio/Plug-Ins tras compilar" ON)
+else()
+    option(KUMAMP_COPY_AFTER_BUILD "Copiar el VST3 a la carpeta del sistema tras compilar" OFF)
+endif()
 set(KUMAMP_JUCE_PATH "" CACHE PATH "Checkout local de JUCE (vacio = descargar con FetchContent)")
 
 # ---------------------------------------------------------------------------
@@ -33,11 +44,20 @@ set(KUMAMP_JUCE_PATH "" CACHE PATH "Checkout local de JUCE (vacio = descargar co
 # Sin -ffast-math: rompe isnan/isinf y la deteccion de denormales.
 # ---------------------------------------------------------------------------
 add_library(kumamp_compile_flags INTERFACE)
-target_compile_options(kumamp_compile_flags INTERFACE
-    -Wall -Wextra -Wshadow -Wno-unused-parameter
-    $<$<CONFIG:Release,RelWithDebInfo>:-O3 -fno-math-errno -ffp-contract=fast>)
-if(NOT KUMAMP_UNIVERSAL)
-    # Afinado especifico para la microarquitectura Apple (M1 y posteriores).
+if(MSVC)
+    # /utf-8: fuentes y literales en UTF-8. /bigobj: Eigen / plantillas grandes.
+    target_compile_options(kumamp_compile_flags INTERFACE /W3 /utf-8 /bigobj /permissive- $<$<CONFIG:Release,RelWithDebInfo>:/O2>)
+    target_compile_definitions(kumamp_compile_flags INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+else()
+    target_compile_options(kumamp_compile_flags INTERFACE
+        -Wall -Wextra -Wshadow -Wno-unused-parameter
+        $<$<CONFIG:Release,RelWithDebInfo>:-O3 -fno-math-errno -ffp-contract=fast>)
+endif()
+
+# Afinado para la microarquitectura Apple (M1 y posteriores) en builds arm64 nativos.
+set(KUMAMP_APPLE_NATIVE OFF)
+if(APPLE AND NOT KUMAMP_UNIVERSAL)
+    set(KUMAMP_APPLE_NATIVE ON)
     target_compile_options(kumamp_compile_flags INTERFACE -mcpu=apple-m1)
 endif()
 
@@ -53,10 +73,17 @@ add_library(KumAmpCore STATIC
     Source/Graph/RenderPlan.cpp
     Source/Graph/BlockFactory.cpp
     Source/Scenes/SceneBank.cpp
+    Source/Core/PitchDetector.cpp
     Source/DSP/Routing/RoutingParams.cpp
     Source/DSP/Pitch/WsolaPitchShifter.cpp
     Source/DSP/Pitch/PitchShifterBlock.cpp
-    Source/DSP/Utility/VolumeBlock.cpp)
+    Source/DSP/Utility/VolumeBlock.cpp
+    Source/DSP/Pitch/PreFxBlocks.cpp
+    Source/DSP/Pitch/GuitarSynthBlock.cpp
+    Source/DSP/Dynamics/DynamicsBlocks.cpp
+    Source/DSP/Modulation/ModulationBlocks.cpp
+    Source/DSP/Time/DelayBlocks.cpp
+    Source/DSP/Time/ReverbBlocks.cpp)
 target_include_directories(KumAmpCore PUBLIC Source)
 target_link_libraries(KumAmpCore PRIVATE kumamp_compile_flags)
 set_target_properties(KumAmpCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -95,8 +122,13 @@ add_library(KumAmpNam OBJECT ${NAM_SOURCES})
 target_include_directories(KumAmpNam SYSTEM PUBLIC
     ${NAM_DIR} ${NAM_DIR}/Dependencies/eigen ${NAM_DIR}/Dependencies/nlohmann)
 target_compile_definitions(KumAmpNam PUBLIC NAM_SAMPLE_FLOAT NAM_ENABLE_A2_FAST)
-target_compile_options(KumAmpNam PRIVATE -w $<$<CONFIG:Release,RelWithDebInfo>:-O3>)
-if(NOT KUMAMP_UNIVERSAL)
+if(MSVC)
+    target_compile_definitions(KumAmpNam PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+    target_compile_options(KumAmpNam PRIVATE /W0 /utf-8 /bigobj $<$<CONFIG:Release,RelWithDebInfo>:/O2>)
+else()
+    target_compile_options(KumAmpNam PRIVATE -w $<$<CONFIG:Release,RelWithDebInfo>:-O3>)
+endif()
+if(KUMAMP_APPLE_NATIVE)
     target_compile_options(KumAmpNam PRIVATE -mcpu=apple-m1)
 endif()
 set_target_properties(KumAmpNam PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -108,7 +140,25 @@ set(KUMAMP_JUCE_SOURCES
     Source/DSP/JuceBlocks.cpp
     Source/DSP/Amp/NamAmpBlock.cpp
     Source/DSP/Amp/NamProfileInfo.cpp
-    Source/DSP/Cab/IrLoaderBlock.cpp)
+    Source/DSP/Cab/IrLoaderBlock.cpp
+    Source/Tuner/Tuner.cpp
+    Source/UI/TunerView.cpp)
+
+set(KUMAMP_UI_SOURCES
+    Source/UI/Theme.cpp
+    Source/UI/KumAmpLookAndFeel.cpp
+    Source/UI/EditorSections.cpp
+    Source/UI/GridView.cpp
+    Source/UI/BlockPanel.cpp
+    Source/UI/EqView.cpp
+    Source/UI/SettingsView.cpp)
+
+# AU solo existe en macOS.
+if(APPLE)
+    set(KUMAMP_FORMATS VST3 AU Standalone)
+else()
+    set(KUMAMP_FORMATS VST3 Standalone)
+endif()
 
 juce_add_plugin(KumAmp
     PRODUCT_NAME                  "KumAmp"
@@ -116,10 +166,10 @@ juce_add_plugin(KumAmp
     BUNDLE_ID                     com.kumampaudio.kumamp
     PLUGIN_MANUFACTURER_CODE      Kumo
     PLUGIN_CODE                   KAmp
-    FORMATS                       VST3 AU Standalone
+    FORMATS                       ${KUMAMP_FORMATS}
     IS_SYNTH                      FALSE
-    NEEDS_MIDI_INPUT              FALSE
-    NEEDS_MIDI_OUTPUT             FALSE
+    NEEDS_MIDI_INPUT              TRUE     # Program Change -> scenes, CC -> macros
+    NEEDS_MIDI_OUTPUT             TRUE     # guitar -> MIDI notes for other instruments
     IS_MIDI_EFFECT                FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS   FALSE
     AU_MAIN_TYPE                  kAudioUnitType_Effect
@@ -133,8 +183,7 @@ target_sources(KumAmp PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     ${KUMAMP_JUCE_SOURCES}
-    Source/UI/GridView.cpp
-    Source/UI/BlockPanel.cpp)
+    ${KUMAMP_UI_SOURCES})
 
 target_compile_definitions(KumAmp PUBLIC
     JUCE_WEB_BROWSER=0
@@ -175,13 +224,14 @@ if(KUMAMP_BUILD_TESTS)
 
     # Integracion: motor + NAM + IR con JUCE real.
     juce_add_console_app(KumAmpIntegrationTests PRODUCT_NAME "KumAmpIntegrationTests")
-    target_sources(KumAmpIntegrationTests PRIVATE Tests/IntegrationTests.cpp ${KUMAMP_JUCE_SOURCES})
+    target_sources(KumAmpIntegrationTests PRIVATE Tests/IntegrationTests.cpp ${KUMAMP_JUCE_SOURCES} ${KUMAMP_UI_SOURCES})
     target_compile_definitions(KumAmpIntegrationTests PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
-        KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models")
+        KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
+        KUMAMP_SNAPSHOT_DIR="${CMAKE_BINARY_DIR}/snapshots")
     target_link_libraries(KumAmpIntegrationTests PRIVATE
         KumAmpCore KumAmpNam kumamp_compile_flags
-        juce::juce_audio_formats juce::juce_dsp juce::juce_data_structures
+        juce::juce_audio_formats juce::juce_audio_processors juce::juce_dsp juce::juce_data_structures juce::juce_gui_basics
         juce::juce_recommended_config_flags)
     add_test(NAME KumAmpIntegrationTests COMMAND KumAmpIntegrationTests)
 
@@ -191,9 +241,21 @@ if(KUMAMP_BUILD_TESTS)
     target_compile_definitions(KumAmpHostTest PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1
         KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
-        KUMAMP_VST3_PATH="$<TARGET_BUNDLE_DIR:KumAmp_VST3>")
+        KUMAMP_VST3_PATH="$<GENEX_EVAL:$<TARGET_PROPERTY:KumAmp_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
     target_link_libraries(KumAmpHostTest PRIVATE
-        juce::juce_audio_processors juce::juce_recommended_config_flags)
+        kumamp_compile_flags juce::juce_audio_processors juce::juce_recommended_config_flags)
     add_dependencies(KumAmpHostTest KumAmp_VST3)
     add_test(NAME KumAmpHostTest COMMAND KumAmpHostTest)
+
+    # Renders the real editor (processor + UI) to PNG for visual review.
+    juce_add_console_app(KumAmpUiSnapshot PRODUCT_NAME "KumAmpUiSnapshot")
+    target_sources(KumAmpUiSnapshot PRIVATE Tests/UiSnapshot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
+        ${KUMAMP_JUCE_SOURCES} ${KUMAMP_UI_SOURCES})
+    target_compile_definitions(KumAmpUiSnapshot PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Name="KumAmp"
+        KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
+        KUMAMP_SNAPSHOT_DIR="${CMAKE_BINARY_DIR}/snapshots")
+    target_link_libraries(KumAmpUiSnapshot PRIVATE
+        KumAmpCore KumAmpNam kumamp_compile_flags
+        juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 endif()

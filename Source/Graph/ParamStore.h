@@ -7,6 +7,7 @@
 #include <atomic>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace kumamp
 {

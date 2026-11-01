@@ -189,6 +189,48 @@ private:
     JUCE_DECLARE_NON_COPYABLE (RTCrossfadeSlot)
 };
 
+/** Lock-free SPSC stream of audio samples (audio thread -> analysis thread).
+    write() drops what doesn't fit instead of blocking. */
+template <int Capacity>
+class AudioSampleFifo
+{
+public:
+    int write (const float* data, int numSamples) noexcept
+    {
+        const auto scope = fifo.write (numSamples);
+        copyIn (data, scope.startIndex1, scope.blockSize1);
+        copyIn (data + scope.blockSize1, scope.startIndex2, scope.blockSize2);
+        return scope.blockSize1 + scope.blockSize2;
+    }
+
+    int read (float* destination, int maxSamples) noexcept
+    {
+        const auto scope = fifo.read (maxSamples);
+        copyOut (destination, scope.startIndex1, scope.blockSize1);
+        copyOut (destination + scope.blockSize1, scope.startIndex2, scope.blockSize2);
+        return scope.blockSize1 + scope.blockSize2;
+    }
+
+    /** Only while neither side is running. */
+    void reset() noexcept { fifo.reset(); }
+
+private:
+    void copyIn (const float* src, int start, int count) noexcept
+    {
+        if (count > 0)
+            std::copy (src, src + count, buffer.begin() + start);
+    }
+
+    void copyOut (float* dst, int start, int count) const noexcept
+    {
+        if (count > 0)
+            std::copy (buffer.begin() + start, buffer.begin() + start + count, dst);
+    }
+
+    juce::AbstractFifo fifo { Capacity };
+    std::array<float, (size_t) Capacity> buffer {};
+};
+
 /** Shared background thread for file loading (NAM models, IRs, ...). */
 struct FileLoaderPool
 {

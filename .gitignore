@@ -4,3 +4,5 @@ cmake-build-*/
 *.xcodeproj/
 .cache/
 compile_commands.json
+build-win/
+dist/

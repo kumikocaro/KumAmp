@@ -14,7 +14,7 @@ enum class BlockType : std::uint16_t
     // Input
     Tuner, NoiseGate,
     // Pitch & Pre-FX
-    PitchShifter, Wah, AutoWah, Octaver,
+    PitchShifter, Wah, AutoWah, Octaver, GuitarSynth,
     // Core
     NamAmp,
     // Cab

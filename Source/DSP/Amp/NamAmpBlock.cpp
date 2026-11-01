@@ -6,20 +6,41 @@
 
 #include <filesystem>
 #include <iterator>
+#include <utility>
 
 namespace kumamp
 {
 namespace
 {
     constexpr ParamInfo kParams[] = {
-        { "input",     "Input",       -24.0f, 24.0f, 0.0f, "dB", false },
-        { "output",    "Output",      -40.0f, 12.0f, 0.0f, "dB", false },
-        { "normalize", "Normalizar",    0.0f,  1.0f, 1.0f, "",   true  },
-        { "profile",   "Perfil (0 Auto/1 Amp/2 E2E)", 0.0f, 2.0f, 0.0f, "", true },
+        { "input",     "Gain",        -24.0f, 24.0f, 0.0f, "dB", false },
+        { "bass",      "Bass",          0.0f, 10.0f, 5.0f, "",   false },
+        { "mid",       "Mid",           0.0f, 10.0f, 5.0f, "",   false },
+        { "treble",    "Treble",        0.0f, 10.0f, 5.0f, "",   false },
+        { "presence",  "Presence",      0.0f, 10.0f, 5.0f, "",   false },
+        { "output",    "Master",      -40.0f, 12.0f, 0.0f, "dB", false },
+        { "normalize", "Normalizar",    0.0f,  1.0f, 1.0f, "Off|On", true },
+        { "profile",   "Perfil",        0.0f,  2.0f, 0.0f, "Auto|Amp-Only|End-to-End", true },
     };
     static_assert (std::size (kParams) == NamAmpBlock::NumParams);
 
     constexpr float kTargetLoudnessDb = -18.0f;
+
+    /** UTF-8 path -> std::filesystem::path. On Windows a narrow string would be
+        read in the ANSI code page and break paths with accents (C:/Users/Música/...). */
+    std::filesystem::path toFsPath (const std::string& utf8)
+    {
+       #if JUCE_WINDOWS
+        return std::filesystem::path (juce::String::fromUTF8 (utf8.c_str()).toWideCharPointer());
+       #else
+        return std::filesystem::path (utf8);
+       #endif
+    }
+
+    std::string fileNameOf (const std::string& utf8)
+    {
+        return juce::File (juce::String::fromUTF8 (utf8.c_str())).getFileName().toStdString();
+    }
 } // namespace
 
 //==============================================================================
@@ -70,7 +91,7 @@ bool NamAmpBlock::loadFile (int slot, const std::string& path)
     {
         const std::lock_guard<std::mutex> guard (shared->lock);
         shared->requestedPath = path;
-        shared->status = "Cargando " + std::filesystem::path (path).filename().string() + "...";
+        shared->status = "Cargando " + fileNameOf (path) + "...";
     }
 
     if (isPrepared())
@@ -90,6 +111,37 @@ std::string NamAmpBlock::getStatusText() const
 {
     const std::lock_guard<std::mutex> guard (shared->lock);
     return shared->status;
+}
+
+std::vector<std::string> NamAmpBlock::getInfoChips() const
+{
+    std::vector<std::string> chips { profileKindName (getEffectiveProfileKind()) };
+    const std::lock_guard<std::mutex> guard (shared->lock);
+    if (! shared->version.empty())      chips.push_back ("NAM " + shared->version);
+    if (! shared->architecture.empty()) chips.push_back (shared->architecture == "SlimmableContainer" ? "A2" : shared->architecture);
+    if (shared->resampled)              chips.push_back ("Resample");
+    return chips;
+}
+
+void NamAmpBlock::updateToneStack (bool force) noexcept
+{
+    // 5 = flat. Bass/Mid/Treble +-12 dB, Presence +-10 dB (post-model, like an amp's tone stack).
+    const float values[4] = { getParam (Bass), getParam (Mid), getParam (Treble), getParam (Presence) };
+    const double sr = getSampleRate();
+    for (int k = 0; k < 4; ++k)
+    {
+        if (! force && exactlyEqual (values[k], toneValues[(size_t) k]))
+            continue;
+        toneValues[(size_t) k] = values[k];
+        const float db = (values[k] - 5.0f) * (k == 3 ? 2.0f : 2.4f);
+        switch (k)
+        {
+            case 0: toneStack[0].setLowShelf (sr, 120.0f, db); break;
+            case 1: toneStack[1].setPeak (sr, 700.0f, 0.8f, db); break;
+            case 2: toneStack[2].setHighShelf (sr, 2500.0f, db); break;
+            default: toneStack[3].setHighShelf (sr, 6000.0f, db); break;
+        }
+    }
 }
 
 void NamAmpBlock::collectGarbage()
@@ -140,13 +192,15 @@ void NamAmpBlock::startLoad()
         try
         {
             nam::dspData data;
-            model->dsp = nam::get_dsp (std::filesystem::path (path), data);
+            model->dsp = nam::get_dsp (toFsPath (path), data);
             if (model->dsp == nullptr)
                 throw std::runtime_error ("modelo vacio");
             if (model->dsp->NumInputChannels() != 1 || model->dsp->NumOutputChannels() != 1)
                 throw std::runtime_error ("solo se admiten modelos mono (1 entrada / 1 salida)");
 
             model->info = readNamProfileInfo (data.metadata);
+            model->version = data.version;
+            model->architecture = data.architecture;
             model->trainedRate = model->dsp->GetExpectedSampleRate();
             model->prepare (sampleRate, maxBlockSize);
         }
@@ -156,7 +210,7 @@ void NamAmpBlock::startLoad()
             return;
         }
 
-        std::string status = std::filesystem::path (path).filename().string()
+        std::string status = fileNameOf (path)
                            + "  |  " + profileKindName (model->info.kind);
         if (! model->info.gearType.empty())
             status += " (" + model->info.gearType + ")";
@@ -171,6 +225,9 @@ void NamAmpBlock::startLoad()
             return;
 
         s->status = std::move (status);
+        s->version = model->version;
+        s->architecture = model->architecture;
+        s->resampled = std::abs (model->runRate - sampleRate) > 0.5;
         s->detectedKind.store ((int) kind);
         s->slot.publish (std::move (model));
     });
@@ -208,6 +265,8 @@ void NamAmpBlock::prepareBlock (double sampleRate, int maxBlockSize)
 
 void NamAmpBlock::resetBlock() noexcept
 {
+    for (auto& f : toneStack) f.reset();
+    updateToneStack (true);
     inputGain.setCurrentAndTarget (dbToGain (getParam (InputDb)));
     outputGain.setCurrentAndTarget (dbToGain (getParam (OutputDb)));
 }
@@ -230,6 +289,7 @@ void NamAmpBlock::processBlock (float* left, float* right, int numSamples) noexc
     inputGain.setTarget (dbToGain (getParam (InputDb)));
     outputGain.setTarget (dbToGain (getParam (OutputDb)));
     const bool normalise = getParam (Normalize) > 0.5f;
+    updateToneStack (false);
 
     const auto bytes = sizeof (float) * (size_t) numSamples;
     std::memcpy (dryLeft.data(), left, bytes);
@@ -239,6 +299,12 @@ void NamAmpBlock::processBlock (float* left, float* right, int numSamples) noexc
         mono[(size_t) i] = 0.5f * (left[i] + right[i]) * inputGain.next();
 
     current->process (mono.data(), wetCurrent.data(), numSamples);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float v = wetCurrent[(size_t) i];
+        for (auto& f : toneStack) v = f.process (v);
+        wetCurrent[(size_t) i] = v;
+    }
     const float gainCurrent = normalise ? current->normalisationGain : 1.0f;
 
     NamModel* previous = slot.getPrevious();

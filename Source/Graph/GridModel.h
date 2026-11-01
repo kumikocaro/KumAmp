@@ -67,6 +67,22 @@ public:
     /** Structural checks: single Input/Output, port arity, dangling refs, cycles. */
     bool validate (std::string* error = nullptr) const;
 
+    //== Editing helpers (keep the graph valid) =================================
+    /** Replaces every input reference `from` -> `replacement` on node `to`
+        (or on all nodes if to == kInvalidNode). Returns the number replaced. */
+    int rewire (PortRef from, PortRef replacement, NodeId to = kInvalidNode);
+
+    /** Removes a Block node and connects its input straight to its consumers. */
+    bool removeBlockAndBridge (NodeId id);
+
+    /** Removes Split/Mix pairs whose branches are all empty cables
+        (left behind after deleting the blocks of a parallel section). */
+    int collapseEmptyParallels();
+
+    /** Recomputes row/column: column = longest path from Input, each extra
+        Splitter branch gets its own row. Requires a valid (acyclic) model. */
+    void autoLayout();
+
 private:
     std::vector<GridNode> nodes;
     NodeId nextId = 1;

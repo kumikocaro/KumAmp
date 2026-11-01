@@ -89,8 +89,30 @@ public:
     const GridModel& getModel() const noexcept { return model; }
     int getModelVersion() const noexcept       { return modelVersion; }
 
-    /** Validates + compiles + publishes. On failure nothing changes. */
+    /** Auto-layouts, validates, compiles and publishes. On failure nothing changes. */
     bool commitModel (GridModel newModel, juce::String* error = nullptr);
+
+    /** Inserts a new block on the cable from -> to. parallel = true wraps it in
+        a Split/Mix pair with a dry branch (A/B). Returns the new node or 0. */
+    NodeId insertBlock (PortRef from, NodeId to, BlockType type, bool parallel, juce::String* error = nullptr);
+
+    /** Removes a block, bridging its input to its consumers; empty parallel
+        sections left behind are collapsed. */
+    bool removeBlock (NodeId node, juce::String* error = nullptr);
+
+    /** Drag & drop reorder: takes the block out of its place (bridging the gap)
+        and re-inserts the same instance (state, params, files) on from -> to. */
+    bool moveBlock (NodeId node, PortRef from, NodeId to, juce::String* error = nullptr);
+
+    //== Undo / redo of structural edits (insert, remove, move) ===================
+    bool canUndo() const noexcept { return ! undoStack.empty(); }
+    bool canRedo() const noexcept { return ! redoStack.empty(); }
+    bool undo();
+    bool redo();
+
+    //== Scene names ==============================================================
+    juce::String getSceneName (int scene) const;
+    void setSceneName (int scene, const juce::String& name);
 
     void storeScene (int sceneIndex);
     void assignMacro (int macro, StoreId store, int param, float minValue, float maxValue);
@@ -106,7 +128,20 @@ public:
 
     int getLatencySamples() const noexcept { return latency.load (std::memory_order_relaxed); }
 
+    /** Host tempo for synced delays / LFOs (audio thread writes, anyone reads). */
+    void setTempo (double bpm) noexcept { if (bpm > 1.0) tempoBpm.store (bpm, std::memory_order_relaxed); }
+    double getTempo() const noexcept    { return tempoBpm.load (std::memory_order_relaxed); }
+
 private:
+    struct UndoEntry
+    {
+        GridModel model;
+        std::vector<std::shared_ptr<ParamStore>> stores;   // keeps removed blocks alive for undo
+    };
+    UndoEntry snapshot() const;
+    void pushUndo (UndoEntry entry);
+    bool restore (UndoEntry entry);
+
     void publishSceneBank();
     void pruneUnusedStores();
     void updateCabLinks();
@@ -122,6 +157,8 @@ private:
     GridModel model;
     int modelVersion = 0;
     SceneBank editedScenes;
+    std::array<juce::String, kNumScenes> sceneNames;
+    std::vector<UndoEntry> undoStack, redoStack;
     double sampleRate = 48000.0;
     int maxBlock = 512;
     bool prepared = false;
@@ -134,6 +171,7 @@ private:
     std::array<MacroTarget, kNumMacros> macros;
     std::atomic<int> requestedScene { 0 }, activeScene { 0 };
     std::atomic<int> latency { 0 };
+    std::atomic<double> tempoBpm { 120.0 };
 
     // Audio-thread state ----------------------------------------------------------
     enum class Fade { Running, FadingOut, Muted, FadingIn };

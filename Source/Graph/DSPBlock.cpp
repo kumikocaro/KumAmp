@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 
 namespace kumamp
 {
@@ -32,6 +33,12 @@ void DSPBlock::process (float* left, float* right, int numSamples) noexcept
 {
     if (numSamples <= 0)
         return;
+
+    if (handlesBypassInternally())
+    {
+        processBlock (left, right, numSamples);
+        return;
+    }
 
     const float target = isBypassed() ? 1.0f : 0.0f;
     const bool hasLatency = dryDelay.getDelay() > 0;
