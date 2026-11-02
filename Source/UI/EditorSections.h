@@ -75,7 +75,7 @@ private:
 };
 
 //==============================================================================
-/** Scene selector, scene name, store, undo/redo and the main menu. */
+/** Scene strip under the grid: A-D, previous / next, scene name and store. */
 class SceneBar final : public juce::Component
 {
 public:
@@ -83,12 +83,10 @@ public:
 
     std::function<void (int)> onSceneSelected;
     std::function<void (int, const juce::String&)> onNameEdited;
-    std::function<void()> onStore, onUndo, onRedo;
-    std::function<void (juce::Component&)> onMenu;
+    std::function<void()> onStore;
 
     void setActiveScene (int scene);
     void setSceneName (const juce::String& name);
-    void setUndoState (bool canUndo, bool canRedo);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -96,8 +94,7 @@ public:
 private:
     std::array<juce::TextButton, 4> sceneButtons;
     IconButton previous { theme::Icon::ChevronLeft, "Escena anterior" }, next { theme::Icon::ChevronRight, "Escena siguiente" };
-    IconButton store { theme::Icon::Save, "Guardar escena" }, undo { theme::Icon::Undo, "Deshacer" },
-               redo { theme::Icon::Redo, "Rehacer" }, menu { theme::Icon::Menu, "Menu" };
+    IconButton store { theme::Icon::Save, "Guardar escena" };
     juce::Label prefix, name;
     int activeScene = 0;
 };

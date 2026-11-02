@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "UI/UserSettings.h"
 
 void KumAmpAudioProcessorEditor::Placeholder::paint (juce::Graphics& g)
 {
@@ -18,8 +19,10 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
       kumProcessor (p),
       engine (p.getEngine()),
       sidebar (p.getParameters()),
+      presetBar (p.getPresets()),
       grid (p.getEngine()),
-      settings (p.getParameters())
+      settings (p.getParameters()),
+      presetBrowser (p.getPresets())
 {
     setLookAndFeel (&lookAndFeel);
     addAndMakeVisible (content);
@@ -38,10 +41,15 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
         engine.storeScene (engine.getActiveScene());
         showToast ("Escena " + juce::String::charToString ((juce::juce_wchar) ('A' + engine.getActiveScene())) + " guardada");
     };
-    sceneBar.onUndo = [this] { engine.undo(); };
-    sceneBar.onRedo = [this] { engine.redo(); };
-    sceneBar.onMenu = [this] (juce::Component& source) { showMainMenu (source); };
     content.addAndMakeVisible (sceneBar);
+
+    presetBar.onLoad    = [this] (const juce::File& file) { loadPreset (file); };
+    presetBar.onSave    = [this] { saveCurrentPreset(); };
+    presetBar.onShowAll = [this] { showTab (1); };
+    presetBar.onUndo    = [this] { engine.undo(); };
+    presetBar.onRedo    = [this] { engine.redo(); };
+    presetBar.onMenu    = [this] (juce::Component& source) { showMainMenu (source); };
+    content.addAndMakeVisible (presetBar);
 
     grid.onNodeSelected = [this] (kumamp::StoreId id) { panel.setStore (engine.getStore (id)); };
     grid.onError = [this] (const juce::String& message) { showToast ("Error: " + message); };
@@ -63,6 +71,15 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
 
     panel.onRemove = [this] { grid.removeSelected(); };
     panel.onExpandEq = [this] (std::shared_ptr<kumamp::ParamStore> eqStore) { showEqOverlay (std::move (eqStore)); };
+    panel.onBrowseTone3000 = [this] (std::shared_ptr<kumamp::ParamStore> ampStore, juce::Component& source)
+    {
+        browseTone3000 (std::move (ampStore), source);
+    };
+    panel.onTone3000Variant = [this] (std::shared_ptr<kumamp::ParamStore> ampStore, const kumamp::t3k::Tone& tone,
+                                      const kumamp::t3k::Model& variant)
+    {
+        downloadTone3000Variant (std::move (ampStore), tone, variant);
+    };
     content.addAndMakeVisible (panel);
 
     tunerView.readingSource      = [this] { return kumProcessor.getTuner().getLatest(); };
@@ -76,6 +93,17 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     settings.velocitySource = [this] { return kumProcessor.getMidiOutVelocity(); };
     settings.bendSource     = [this] { return kumProcessor.getMidiOutBend(); };
     content.addChildComponent (settings);
+    presetBrowser.onMessage = [this] (const juce::String& message) { showToast (message); };
+    presetBrowser.onLoaded  = [this] (const juce::String& name)
+    {
+        kumProcessor.selectScene (0);
+        grid.selectNode (kumamp::kInvalidNode);
+        showToast ("Preset \"" + name + "\" cargado");
+    };
+    content.addChildComponent (presetBrowser);
+    tone3000Picker.onChosen = [this] (const kumamp::t3k::Tone& tone, const kumamp::t3k::Model& model) { downloadTone3000Model (tone, model); };
+    tone3000Picker.onClosed = [] { kumamp::t3k::log ("picker: canceled"); };
+    content.addChildComponent (tone3000Picker);
 
     toast.setJustificationType (juce::Justification::centred);
     toast.setColour (juce::Label::backgroundColourId, kumamp::theme::panelRaised);
@@ -131,15 +159,18 @@ void KumAmpAudioProcessorEditor::showTab (int tab)
     header.setActiveTab (tab);
     const char* titles[] = { "", "PRESETS", "SNAPSHOTS", "IRs", "SETTINGS" };
     placeholder.title = titles[juce::jlimit (0, 4, tab)];
-    placeholder.setVisible (tab != 0 && tab != 4);
+    placeholder.setVisible (tab != 0 && tab != 1 && tab != 4);
     settings.setVisible (tab == 4);
+    presetBrowser.setVisible (tab == 1);
     if (tab == 4)
         settings.toFront (false);
+    if (tab == 1)
+        presetBrowser.toFront (false);
     if (tab != 0)
     {
         tunerView.setVisible (false);
         kumProcessor.setTunerViewOpen (false);
-        if (tab != 4)
+        if (tab != 1 && tab != 4)
             placeholder.toFront (false);
         placeholder.repaint();
     }
@@ -150,7 +181,7 @@ void KumAmpAudioProcessorEditor::showToast (const juce::String& message)
     toast.setText (message, juce::dontSendNotification);
     toast.setVisible (true);
     toast.toFront (false);
-    toastUntil = juce::Time::getMillisecondCounter() + 3000;
+    toastUntil = juce::Time::getMillisecondCounter() + (message.startsWith ("Error") ? 7000u : 3500u);
 }
 
 void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
@@ -187,6 +218,152 @@ void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
                                     break;
                             }
                         });
+}
+
+void KumAmpAudioProcessorEditor::browseTone3000 (std::shared_ptr<kumamp::ParamStore> ampStore, juce::Component&)
+{
+    tone3000Target = ampStore;
+    tone3000Picker.setVisible (false);
+    showToast (juce::String (juce::CharPointer_UTF8 ("Eleg\xc3\xad un tono en el navegador (TONE3000)\xe2\x80\xa6")));
+
+    juce::Component::SafePointer<KumAmpAudioProcessorEditor> safe (this);
+    kumProcessor.getTone3000().selectTone ([safe] (juce::Result result, const kumamp::t3k::Tone& tone,
+                                                   const juce::Array<kumamp::t3k::Model>& models)
+    {
+        if (safe == nullptr)
+        {
+            kumamp::t3k::log ("editor closed before the tone arrived");
+            return;
+        }
+        // The browser is in front: bring the host (and this window) back.
+        juce::Process::makeForegroundProcess();
+        if (auto* window = safe->getTopLevelComponent())
+            window->toFront (true);
+
+        if (result.failed())
+        {
+            if (result.getErrorMessage() != "cancelado")
+                safe->showToast ("Error: " + result.getErrorMessage());
+            return;
+        }
+        safe->tone3000Variants = models;
+        if (models.size() == 1)
+        {
+            safe->downloadTone3000Model (tone, models.getFirst());
+            return;
+        }
+        // Several captures in one tone: an in-window chooser (a PopupMenu of a
+        // background window would close itself immediately).
+        kumamp::t3k::log ("picker: " + juce::String (models.size()) + " models shown");
+        safe->tone3000Picker.setBounds (safe->centreColumn);
+        safe->tone3000Picker.show (tone, models);
+    });
+}
+
+void KumAmpAudioProcessorEditor::downloadTone3000Model (const kumamp::t3k::Tone& tone, const kumamp::t3k::Model& model)
+{
+    kumamp::t3k::log ("picker: chose \"" + model.name + "\"");
+    showToast ("Descargando \"" + model.name + "\"" + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")));
+    juce::Component::SafePointer<KumAmpAudioProcessorEditor> safe (this);
+    auto target = tone3000Target;
+    kumProcessor.getTone3000().downloadModel (tone, tone3000Variants, model, [safe, target, tone] (juce::Result result, const juce::File& file)
+    {
+        if (safe == nullptr)
+            return;
+        if (result.failed())
+        {
+            safe->showToast ("Error: " + result.getErrorMessage());
+            return;
+        }
+        auto locked = target.lock();
+        auto* block = dynamic_cast<kumamp::DSPBlock*> (locked.get());
+        const bool loaded = block != nullptr && block->loadFile (0, file.getFullPathName().toStdString());
+        kumamp::t3k::log ("load into amp: " + juce::String (loaded ? "ok " : "FAILED ") + file.getFileName());
+        if (! loaded)
+        {
+            safe->showToast ("Descargado en " + file.getParentDirectory().getFileName() + ", pero el bloque Amp ya no existe");
+            return;
+        }
+        juce::String credit = tone.title;
+        if (tone.creator.isNotEmpty()) credit << " de " << tone.creator;
+        if (tone.license.isNotEmpty()) credit << " (" << tone.license.toUpperCase() << ")";
+        safe->showToast ("Cargado: " + credit);
+    });
+}
+
+void KumAmpAudioProcessorEditor::downloadTone3000Variant (std::shared_ptr<kumamp::ParamStore> ampStore, const kumamp::t3k::Tone& tone,
+                                                          const kumamp::t3k::Model& variant)
+{
+    tone3000Target = ampStore;
+    kumamp::t3k::log ("variant: \"" + variant.name + "\" of tone " + juce::String (tone.id));
+    showToast ("Buscando la variante en TONE3000" + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")));
+
+    // Fresh model URLs (they need the session token); the browser opens only if the session expired.
+    juce::Component::SafePointer<KumAmpAudioProcessorEditor> safe (this);
+    kumProcessor.getTone3000().openTone (tone.id, [safe, variant] (juce::Result result, const kumamp::t3k::Tone& fresh,
+                                                                   const juce::Array<kumamp::t3k::Model>& models)
+    {
+        if (safe == nullptr)
+            return;
+        juce::Process::makeForegroundProcess();   // in case the browser had to confirm the session
+        if (result.failed())
+        {
+            if (result.getErrorMessage() != "cancelado")
+                safe->showToast ("Error: " + result.getErrorMessage());
+            return;
+        }
+        safe->tone3000Variants = models;
+        for (const auto& m : models)
+            if (m.id == variant.id || (variant.id == 0 && m.name == variant.name))
+            {
+                safe->downloadTone3000Model (fresh, m);
+                return;
+            }
+        safe->showToast ("Esa variante ya no existe en TONE3000");
+    });
+}
+
+void KumAmpAudioProcessorEditor::loadPreset (const juce::File& file)
+{
+    const auto result = kumProcessor.getPresets().load (file);
+    if (result.failed())
+    {
+        showToast ("Error: " + result.getErrorMessage());
+        return;
+    }
+    kumProcessor.selectScene (0);
+    grid.selectNode (kumamp::kInvalidNode);
+    if (presetBrowser.isVisible())
+        presetBrowser.refresh();
+    showToast ("Preset \"" + kumProcessor.getPresets().getCurrentName() + "\" cargado");
+}
+
+void KumAmpAudioProcessorEditor::saveCurrentPreset()
+{
+    auto& presets = kumProcessor.getPresets();
+    const auto file = presets.getCurrentFile();
+    if (! file.existsAsFile())
+    {
+        showTab (1);   // no preset yet: the save form
+        showToast (juce::String (juce::CharPointer_UTF8 ("Escrib\xc3\xad un nombre y toc\xc3\xa1 Guardar preset")));
+        return;
+    }
+    const auto info = kumamp::PresetManager::readInfo (file);
+    const auto folder = presets.getFolder();
+    const auto parent = file.getParentDirectory();
+    const auto category = parent == folder ? juce::String() : parent.getRelativePathFrom (folder);
+    auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, "Guardar preset",
+                                                                 juce::String (juce::CharPointer_UTF8 ("\xc2\xbf")) + "Guardar los cambios en \"" + info.name + "\"?",
+                                                                 "Guardar", "Cancelar", this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<KumAmpAudioProcessorEditor> (this), info, category] (int r)
+    {
+        if (safe == nullptr || r != 1)
+            return;
+        const auto result = safe->kumProcessor.getPresets().save (info.name, info.author, category, info.comment);
+        safe->showToast (result.wasOk() ? "Preset \"" + info.name + "\" guardado" : "Error: " + result.getErrorMessage());
+        if (safe->presetBrowser.isVisible())
+            safe->presetBrowser.refresh();
+    });
 }
 
 void KumAmpAudioProcessorEditor::setParameter (const juce::String& id, float value)
@@ -227,7 +404,8 @@ void KumAmpAudioProcessorEditor::timerCallback()
     const int scene = engine.getActiveScene();
     sceneBar.setActiveScene (scene);
     sceneBar.setSceneName (engine.getSceneName (scene));
-    sceneBar.setUndoState (engine.canUndo(), engine.canRedo());
+    presetBar.setUndoState (engine.canUndo(), engine.canRedo());
+    presetBar.refresh();
 
     if (engine.getModelVersion() != shownModelVersion)
     {
@@ -281,16 +459,7 @@ void KumAmpAudioProcessorEditor::resized()
 namespace
 {
     constexpr float kMinScale = 0.6f, kMaxScale = 1.5f;
-
-    std::unique_ptr<juce::PropertiesFile> openUserSettings()
-    {
-        juce::PropertiesFile::Options options;
-        options.applicationName     = "KumAmp";
-        options.filenameSuffix      = ".settings";
-        options.folderName          = "KumAmp";
-        options.osxLibrarySubFolder = "Application Support";
-        return std::make_unique<juce::PropertiesFile> (options);
-    }
+    using kumamp::openUserSettings;
 } // namespace
 
 float KumAmpAudioProcessorEditor::loadSavedScale()
@@ -367,7 +536,8 @@ void KumAmpAudioProcessorEditor::layoutContent()
     palette.setBounds (area.removeFromBottom (96));
     area.removeFromBottom (14);
     centreCard = area;
-    sceneBar.setBounds (area.removeFromTop (62));
+    presetBar.setBounds (area.removeFromTop (62));
+    sceneBar.setBounds (area.removeFromBottom (58));
     grid.setBounds (area.reduced (2));
 
     centreColumn = centre;
@@ -376,5 +546,7 @@ void KumAmpAudioProcessorEditor::layoutContent()
         eqOverlay->setBounds (centre);
     placeholder.setBounds (centre);
     settings.setBounds (centre);
+    presetBrowser.setBounds (centre);
+    tone3000Picker.setBounds (centre);
     toast.setBounds (centreCard.withSizeKeepingCentre (420, 40).withY (centreCard.getBottom() - 56));
 }

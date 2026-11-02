@@ -5,6 +5,9 @@
 #include "DSP/Amp/NamAmpBlock.h"
 #include "DSP/Cab/IrLoaderBlock.h"
 #include "Engine/GridEngine.h"
+#include "Presets/PresetManager.h"
+#include "Tone3000/Tone3000.h"
+#include "DSP/Time/DelayBlocks.h"
 #include "Tuner/Tuner.h"
 #include "UI/TunerView.h"
 #include "UI/GridView.h"
@@ -16,6 +19,7 @@
 #include <cstdio>
 #include <fstream>
 #include <new>
+#include <thread>
 
 using namespace kumamp;
 
@@ -36,6 +40,7 @@ void operator delete (void* p, std::size_t) noexcept { std::free (p); }
 
 static int failures = 0;
 #define CHECK(cond) do { if (! (cond)) { ++failures; std::printf ("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } } while (0)
+#define CHECK_NEAR(a, b, tol) CHECK (std::abs ((double) (a) - (double) (b)) <= (tol))
 
 namespace
 {
@@ -464,6 +469,277 @@ void testGridEditing()
 }
 } // namespace
 
+// Minimal processor so PresetManager gets a real APVTS with the global parameter ids.
+struct PresetTestProcessor final : public juce::AudioProcessor
+{
+    PresetTestProcessor() : parameters (*this, nullptr, "Params", makeLayout()) {}
+    static juce::AudioProcessorValueTreeState::ParameterLayout makeLayout()
+    {
+        using namespace juce;
+        AudioProcessorValueTreeState::ParameterLayout layout;
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gate_on", 1 }, "Gate", true));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "gate_threshold", 1 }, "Thr", NormalisableRange<float> { -90.0f, 0.0f, 0.5f }, -60.0f));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "gate_release", 1 }, "Rel", NormalisableRange<float> { 5.0f, 1000.0f, 1.0f }, 120.0f));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { "pitch_on", 1 }, "Pitch", false));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "pitch_semitones", 1 }, "St", NormalisableRange<float> { -12.0f, 12.0f, 1.0f }, 0.0f));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "pitch_instrument", 1 }, "Instr", StringArray { "Guitarra", "Bajo" }, 0));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "output_gain", 1 }, "Out", NormalisableRange<float> { -24.0f, 12.0f, 0.1f }, 0.0f));
+        return layout;
+    }
+    const juce::String getName() const override { return "test"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+    juce::AudioProcessorValueTreeState parameters;
+};
+
+void testDefaultPresetDryEffects()
+{
+    std::puts ("default preset: delay and reverb start bypassed in every scene");
+    GridEngine engine;
+    engine.prepare (48000.0, kBlock);
+    engine.loadDefaultPreset();
+    std::vector<StoreId> timeFx;
+    for (const auto& node : engine.getModel().getNodes())
+        if (auto s = engine.getStore (node.store))
+            if (s->getType() == BlockType::DigitalDelay || s->getType() == BlockType::PlateReverb)
+            {
+                CHECK (s->isBypassed());
+                timeFx.push_back (s->getId());
+            }
+    CHECK (timeFx.size() == 2);
+
+    const auto state = engine.saveState();
+    int snapshots = 0;
+    for (const auto& sc : state.getChildWithName ("Scenes"))
+        for (const auto& sn : sc)
+            if (std::find (timeFx.begin(), timeFx.end(), (StoreId) (int) sn.getProperty ("store")) != timeFx.end())
+            {
+                CHECK ((bool) sn.getProperty ("bypass"));
+                ++snapshots;
+            }
+    CHECK (snapshots == 8);   // 2 blocks x 4 scenes
+}
+
+void testPresets()
+{
+    std::puts ("presets: save / scan / load (missing model relocated) / trash");
+    const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_preset_test");
+    root.deleteRecursively();
+    const auto models = root.getChildFile ("models");
+    models.createDirectory();
+    const auto model = models.getChildFile ("my_amp.nam");
+    CHECK (kExamples.getChildFile ("lstm.nam").copyFileTo (model));
+
+    PresetTestProcessor processor;
+    GridEngine engine;
+    engine.prepare (48000.0, kBlock);
+    engine.loadDefaultPreset();
+
+    PresetManager manager (engine, processor.parameters);
+    manager.setFolder (root.getChildFile ("Presets"));
+
+    auto findType = [&engine] (BlockType type) -> std::shared_ptr<ParamStore>
+    {
+        for (const auto& node : engine.getModel().getNodes())
+            if (auto s = engine.getStore (node.store); s != nullptr && s->getType() == type)
+                return s;
+        return {};
+    };
+    auto amp = findType (BlockType::NamAmp);
+    auto delay = findType (BlockType::DigitalDelay);
+    CHECK (amp != nullptr && delay != nullptr);
+    if (amp == nullptr || delay == nullptr) return;
+    static_cast<DSPBlock*> (amp.get())->loadFile (0, model.getFullPathName().toStdString());
+    delay->setBypassed (false);
+    delay->setParam (DigitalDelayBlock::TimeMs, 333.0f);
+    auto* threshold = processor.parameters.getParameter ("gate_threshold");
+    threshold->setValueNotifyingHost (threshold->convertTo0to1 (-42.0f));
+
+    const auto saved = manager.save (juce::String (juce::CharPointer_UTF8 ("Lead Ca\xc3\xb1\xc3\xb3n")), "Kumo", "Pack Test", "Les Paul, puente");
+    CHECK (saved.wasOk());
+    const auto presets = manager.scan();
+    CHECK (presets.size() == 1);
+    if (presets.size() != 1) return;
+    CHECK (presets[0].category == "Pack Test");
+    CHECK (presets[0].author == "Kumo");
+    CHECK (presets[0].name == juce::String (juce::CharPointer_UTF8 ("Lead Ca\xc3\xb1\xc3\xb3n")));
+    std::printf ("  saved %s\n", presets[0].file.getFullPathName().toRawUTF8());
+
+    // Share the pack: the model now lives next to the preset, the original path is gone.
+    const auto packModel = presets[0].file.getParentDirectory().getChildFile ("nam").getChildFile ("my_amp.nam");
+    packModel.getParentDirectory().createDirectory();
+    CHECK (model.moveFileTo (packModel));
+
+    engine.loadDefaultPreset();
+    threshold->setValueNotifyingHost (threshold->convertTo0to1 (-60.0f));
+
+    CHECK (manager.load (presets[0].file).wasOk());
+    CHECK_NEAR (processor.parameters.getRawParameterValue ("gate_threshold")->load(), -42.0, 0.01);
+    delay = findType (BlockType::DigitalDelay);
+    amp = findType (BlockType::NamAmp);
+    CHECK (delay != nullptr && ! delay->isBypassed());
+    if (delay != nullptr) CHECK_NEAR (delay->getParam (DigitalDelayBlock::TimeMs), 333.0, 0.01);
+    const auto path = amp != nullptr ? juce::String (static_cast<DSPBlock*> (amp.get())->getFilePath (0)) : juce::String();
+    std::printf ("  model resolved to %s\n", path.toRawUTF8());
+    CHECK (juce::File (path) == packModel);
+
+    CHECK (! manager.remove (packModel));   // only .kumamp files inside the preset folder
+    if (juce::SystemStats::getEnvironmentVariable ("CI", {}).isNotEmpty())
+    {
+        // Moves to the real trash: only on CI, so local runs don't fill the user's trash.
+        CHECK (manager.remove (presets[0].file));
+        CHECK (manager.scan().empty());
+    }
+    root.deleteRecursively();
+}
+
+void testTone3000Helpers()
+{
+    std::puts ("TONE3000: PKCE S256, redirect parsing, library folder names");
+    // Expected value computed with: printf %s VERIFIER | openssl dgst -sha256 -binary | base64url
+    CHECK (t3k::codeChallengeFor ("testverifier1234567890abcdefghijklmnopqrstuv") == "iD5RdzKnlgiKI9e921_tHV9XuAvxKG3TbELKaFkPN28");
+
+    const auto q = t3k::parseQuery ("/callback?code=ab%2Bc&state=xyz&tone_id=4521#frag");
+    CHECK (q["code"] == "ab+c");
+    CHECK (q["state"] == "xyz");
+    CHECK (q["tone_id"] == "4521");
+    CHECK (t3k::parseQuery ("canceled=true&state=s")["canceled"] == "true");
+
+    t3k::Tone tone;
+    tone.id = 7;
+    tone.title = "Plexi 1959: Super Lead / Crunch?";
+    tone.creator = "kumo";
+    const auto folder = t3k::folderNameFor (tone);
+    std::printf ("  folder \"%s\"\n", folder.toRawUTF8());
+    CHECK (folder.isNotEmpty() && ! folder.containsAnyOf ("/\\:?*\"<>|"));
+    CHECK (folder.endsWith ("kumo"));
+    CHECK (juce::String (t3k::Session::publishableKey()).startsWith ("t3k_pub_"));
+
+    // /api/v1/models reply, same shape as the live API (seen in the diagnostics log).
+    {
+        juce::String reply = "{\"data\":[";
+        for (int i = 0; i < 6; ++i)
+            reply << (i ? "," : "") << "{\"id\":" << (289460 + i) << ",\"tone_id\":51649,\"user_id\":1,\"created_at\":\"x\","
+                  << "\"updated_at\":\"x\",\"name\":\"Fender DRRI | Clean | Mic " << i << "\","
+                  << "\"model_url\":\"https://www.tone3000.com/api/v1/models/" << (289460 + i) << "/download/a.nam\","
+                  << "\"size\":\"standard\",\"architecture_version\":\"2\"}";
+        reply << "],\"page\":1,\"page_size\":100,\"total\":6,\"total_pages\":1}";
+        for (int repeat = 0; repeat < 50; ++repeat)   // the old dangling read failed only sometimes
+        {
+            const auto models = t3k::parseModelList (reply);
+            CHECK (models.size() == 6);
+            if (models.size() != 6) break;
+            CHECK (models[5].id == 289465 && models[5].name.endsWith ("Mic 5") && models[5].url.contains ("/download/"));
+        }
+        CHECK (t3k::parseModelList ("{\"data\":[]}").isEmpty());
+        CHECK (t3k::parseModelList ("not json").isEmpty());
+    }
+
+    // tone.json round trip (the amp block's "Variantes" row reads it back).
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_t3k_tone");
+    dir.deleteRecursively();
+    juce::Array<t3k::Model> variants;
+    for (int i = 0; i < 3; ++i)
+    {
+        t3k::Model m;
+        m.id = 100 + i;
+        m.name = "DRRI | Clean | Mic " + juce::String (i + 1);
+        m.size = "standard";
+        m.url = "https://example.invalid/never-saved";
+        variants.add (m);
+    }
+    tone.license = "cc-by";
+    tone.url = "https://www.tone3000.com/tones/7";
+    CHECK (t3k::writeToneFolder (dir, tone, variants));
+    t3k::Tone readTone;
+    juce::Array<t3k::Model> readVariants;
+    CHECK (t3k::readToneFolder (dir, readTone, readVariants));
+    CHECK (readTone.id == 7 && readTone.creator == "kumo" && readTone.license == "cc-by");
+    CHECK (readVariants.size() == 3 && readVariants[2].id == 102 && readVariants[2].name == variants[2].name);
+    CHECK (readVariants[0].url.isEmpty());   // download URLs are never stored
+    CHECK (! dir.getChildFile ("tone.json").loadFileAsString().contains ("example.invalid"));
+    CHECK (t3k::modelFileName (variants[0]) == "DRRI  Clean  Mic 1.nam" || t3k::modelFileName (variants[0]).endsWith (".nam"));
+    CHECK (dir.getChildFile ("tone.txt").loadFileAsString().contains ("cc-by"));
+    dir.deleteRecursively();
+}
+
+// Live checks against tone3000.com / httpbin.org: only with KUMAMP_NETWORK_TESTS=1.
+void testTone3000Network()
+{
+    if (juce::SystemStats::getEnvironmentVariable ("KUMAMP_NETWORK_TESTS", {}).isEmpty())
+        return;
+    std::puts ("TONE3000 (network): loopback redirect -> state check -> real token endpoint");
+
+    // Simulates the browser coming back to the loopback receiver with `query`.
+    auto runFlow = [] (std::function<juce::String (const juce::StringPairArray& authorizeParams)> makeQuery)
+    {
+        t3k::Session session;
+        juce::URL opened;
+        session.openBrowser = [&opened] (const juce::URL& url) { opened = url; return true; };
+        juce::String error = "<no result>";
+        bool done = false;
+        session.selectTone ([&] (juce::Result r, const t3k::Tone&, const juce::Array<t3k::Model>&)
+        {
+            error = r.wasOk() ? juce::String() : r.getErrorMessage();
+            done = true;
+        });
+        const auto params = t3k::parseQuery (opened.toString (true));
+        const auto redirect = params["redirect_uri"] + "?" + makeQuery (params);
+        std::thread browser ([redirect]
+        {
+            int status = 0;
+            auto stream = juce::URL (redirect).createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                                                                      .withConnectionTimeoutMs (5000).withStatusCode (&status));
+            if (stream != nullptr) stream->readEntireStreamAsString();
+        });
+        for (int i = 0; i < 300 && ! done; ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        browser.join();
+        return error;
+    };
+
+    const auto fakeCode = runFlow ([] (const juce::StringPairArray& p) { return "code=not-a-real-code&state=" + p["state"] + "&tone_id=1"; });
+    std::printf ("  fake code -> %s\n", fakeCode.toRawUTF8());
+    CHECK (fakeCode.contains ("inicio de sesion") && fakeCode.contains ("HTTP 4"));   // reached the real token endpoint
+
+    const auto badState = runFlow ([] (const juce::StringPairArray&) { return juce::String ("code=x&state=forged&tone_id=1"); });
+    std::printf ("  forged state -> %s\n", badState.toRawUTF8());
+    CHECK (badState.contains ("state"));
+
+    const auto canceled = runFlow ([] (const juce::StringPairArray& p) { return "canceled=true&state=" + p["state"]; });
+    std::printf ("  canceled -> %s\n", canceled.toRawUTF8());
+    CHECK (canceled.contains ("sin elegir"));
+
+    {
+        juce::MemoryBlock echo;
+        int echoStatus = 0;
+        t3k::fetchAuthorized (juce::URL ("https://httpbin.org/get").withParameter ("tone_id", "51649").withParameter ("page_size", "100"),
+                              "tok", echo, echoStatus);
+        std::printf ("  query echo: %s\n", echo.toString().replaceCharacters ("\n", " ").substring (0, 300).toRawUTF8());
+    }
+    std::puts ("TONE3000 (network): storage redirect drops the Authorization header");
+    juce::MemoryBlock body;
+    int status = 0;
+    const auto r = t3k::fetchAuthorized (juce::URL ("https://httpbin.org/redirect-to?url=https%3A%2F%2Fhttpbin.org%2Fheaders"),
+                                         "secret-token", body, status);
+    std::printf ("  HTTP %d, %d bytes\n", status, (int) body.getSize());
+    CHECK (r.wasOk());
+    CHECK (body.toString().contains ("\"Host\"") && ! body.toString().contains ("secret-token"));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // JUCE singletons / threads
@@ -479,6 +755,10 @@ int main()
     testTunerPipeline();
     testTunerSnapshots();
     testGridEditing();
+    testDefaultPresetDryEffects();
+    testPresets();
+    testTone3000Helpers();
+    testTone3000Network();
 
     std::printf (failures == 0 ? "\nALL INTEGRATION TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
     return failures == 0 ? 0 : 1;

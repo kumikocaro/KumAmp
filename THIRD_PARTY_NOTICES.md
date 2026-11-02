@@ -11,9 +11,12 @@ Incluye o usa estos componentes, cada uno con su propia licencia:
 | [NeuralAmpModelerCore](https://github.com/sdatkinson/NeuralAmpModelerCore) | Inferencia de modelos NAM | MIT |
 | [Eigen](https://eigen.tuxfamily.org) (vía NeuralAmpModelerCore) | Álgebra lineal | MPL 2.0 |
 | [nlohmann/json](https://github.com/nlohmann/json) (vía NeuralAmpModelerCore) | Lectura de archivos .nam | MIT |
+| [Ejemplo JUCE de la API de TONE3000](https://github.com/tone-3000/api) | Base del flujo OAuth (PKCE + redirect local) en `Source/Tone3000` | MIT |
 
 ASIO es una marca comercial y software de Steinberg Media Technologies GmbH.
 VST es una marca comercial de Steinberg Media Technologies GmbH.
+TONE3000 es un servicio de terceros: los tonos que descargas tienen la licencia que eligió su creador
+(se guarda en `tone.txt` junto a cada modelo). Powered by TONE3000 — https://www.tone3000.com
 
 El código fuente completo de KumAmp, con las instrucciones para compilarlo, está en
 https://github.com/kumikocaro/KumAmp

@@ -2,6 +2,7 @@
 
 #include "EqView.h"
 #include "Widgets.h"
+#include "../Tone3000/Tone3000.h"
 #include "../Graph/ParamStore.h"
 
 #include <functional>
@@ -33,6 +34,10 @@ public:
     std::function<void()> onRemove;
     /** Expand button of the graphic EQ: open it large. */
     std::function<void (std::shared_ptr<ParamStore>)> onExpandEq;
+    /** "TONE3000" button of the NAM amp block: pick a tone on tone3000.com for this store. */
+    std::function<void (std::shared_ptr<ParamStore>, juce::Component& source)> onBrowseTone3000;
+    /** A not-yet-downloaded variant of the loaded TONE3000 tone was picked. */
+    std::function<void (std::shared_ptr<ParamStore>, const t3k::Tone&, const t3k::Model&)> onTone3000Variant;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -58,6 +63,7 @@ private:
         std::unique_ptr<juce::ComboBox> files;
         std::unique_ptr<IconButton> browse;
         juce::Array<juce::File> choices;
+        juce::Array<juce::File> library;   // NAM amp: every model downloaded from TONE3000
         std::string shownPath;
     };
 
@@ -72,6 +78,13 @@ private:
     std::vector<std::string> chips;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<EqView> eqView;
+    std::unique_ptr<juce::TextButton> tone3000Button;
+    std::unique_ptr<juce::HyperlinkButton> tone3000Credit;
+    std::unique_ptr<juce::ComboBox> variants;          // other captures of the loaded TONE3000 tone
+    t3k::Tone variantTone;
+    juce::Array<t3k::Model> variantModels;
+    juce::File variantFolder;
+    void populateVariants (const juce::File& currentModel);
     int syncParam = -1, divisionParam = -1;
     LevelMeter outputMeter { 2, true };
 

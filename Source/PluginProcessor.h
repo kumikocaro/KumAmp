@@ -4,6 +4,8 @@
 #include "DSP/Midi/GuitarToMidi.h"
 #include "DSP/Pitch/PitchShifterBlock.h"
 #include "Engine/GridEngine.h"
+#include "Presets/PresetManager.h"
+#include "Tone3000/Tone3000.h"
 #include "Tuner/Tuner.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -53,6 +55,8 @@ public:
     kumamp::GridEngine& getEngine() noexcept { return engine; }
     kumamp::Tuner& getTuner() noexcept { return tuner; }
     juce::AudioProcessorValueTreeState& getParameters() noexcept { return parameters; }
+    kumamp::PresetManager& getPresets() noexcept { return presets; }
+    kumamp::t3k::Session& getTone3000() noexcept { return tone3000; }
 
     void selectScene (int sceneIndex);
 
@@ -84,6 +88,8 @@ private:
     kumamp::NoiseGateBlock inputGate { 1 };
     kumamp::PitchShifterBlock globalPitch { 2 };
     juce::AudioProcessorValueTreeState parameters;
+    kumamp::PresetManager presets { engine, parameters };
+    kumamp::t3k::Session tone3000;   // outlives the editor: a browser sign-in can finish after it closes
 
     std::atomic<float>* inputGainDb = nullptr;
     std::atomic<float>* outputGainDb = nullptr;

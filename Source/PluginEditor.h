@@ -5,6 +5,8 @@
 #include "UI/EditorSections.h"
 #include "UI/GridView.h"
 #include "UI/KumAmpLookAndFeel.h"
+#include "UI/PresetBrowser.h"
+#include "UI/Tone3000Picker.h"
 #include "UI/SettingsView.h"
 #include "UI/TunerView.h"
 
@@ -71,6 +73,12 @@ private:
     void showTab (int tab);
     void showToast (const juce::String& message);
     void showMainMenu (juce::Component& source);
+    void browseTone3000 (std::shared_ptr<kumamp::ParamStore> ampStore, juce::Component& source);
+    void downloadTone3000Model (const kumamp::t3k::Tone& tone, const kumamp::t3k::Model& model);
+    void downloadTone3000Variant (std::shared_ptr<kumamp::ParamStore> ampStore, const kumamp::t3k::Tone& tone,
+                                  const kumamp::t3k::Model& variant);
+    void loadPreset (const juce::File& file);
+    void saveCurrentPreset();
     void setParameter (const juce::String& id, float value);
     int groupOfSelectedBlock() const;
 
@@ -83,6 +91,7 @@ private:
 
     kumamp::HeaderBar header;
     kumamp::Sidebar sidebar;
+    kumamp::PresetBar presetBar;
     kumamp::SceneBar sceneBar;
     kumamp::GridView grid;
     kumamp::BlockPalette palette;
@@ -91,6 +100,10 @@ private:
     std::unique_ptr<kumamp::EqView> eqOverlay;   // large graphic EQ over the centre column
     Placeholder placeholder;
     kumamp::SettingsView settings;
+    kumamp::PresetBrowser presetBrowser;
+    kumamp::Tone3000Picker tone3000Picker;
+    std::weak_ptr<kumamp::ParamStore> tone3000Target;   // amp block the picked model goes to
+    juce::Array<kumamp::t3k::Model> tone3000Variants;   // all models of the tone being downloaded
     juce::Label toast;
     juce::TooltipWindow tooltips { this, 700 };
 

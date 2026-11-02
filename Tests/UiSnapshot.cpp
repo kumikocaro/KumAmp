@@ -6,6 +6,18 @@
 #include "DSP/Time/DelayBlocks.h"
 
 #include <cstdio>
+#include <cstdlib>
+
+// setenv / unsetenv do not exist on Windows.
+static void setTestEnv (const char* name, const juce::String& value)
+{
+   #if JUCE_WINDOWS
+    _putenv_s (name, value.toRawUTF8());
+   #else
+    if (value.isEmpty()) unsetenv (name);
+    else                 setenv (name, value.toRawUTF8(), 1);
+   #endif
+}
 
 int main()
 {
@@ -190,6 +202,119 @@ int main()
     }
     pump (200);
     allOk = save ("editor_pitch_bass.png") && allOk;
+
+    // PRESETS tab with a few presets in a temporary folder (never the user's Documents).
+    {
+        auto& presets = processor.getPresets();
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_snapshot_presets");
+        folder.deleteRecursively();
+        presets.setFolder (folder);
+        presets.save ("Crunch Plexi", "Kumo", "Kumo Signature", "Les Paul, pastilla puente");
+        presets.save ("Lead Ambient", "Kumo", "Kumo Signature", "");
+        presets.save ("Clean Funk", "Kumo", "", "Strat, posicion 4");
+        for (auto* child : sections())
+            if (auto* header = dynamic_cast<kumamp::HeaderBar*> (child))
+                if (header->onTabChanged) header->onTabChanged (1);
+        pump (60);
+        allOk = save ("editor_presets.png") && allOk;
+        for (auto* child : sections())
+            if (auto* header = dynamic_cast<kumamp::HeaderBar*> (child))
+                if (header->onTabChanged) header->onTabChanged (0);
+        pump (30);
+        folder.deleteRecursively();
+    }
+
+    // Amp block showing the "Variantes" row of a downloaded TONE3000 tone, in a temporary library.
+    {
+        const auto library = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_snapshot_library");
+        library.deleteRecursively();
+        setTestEnv ("KUMAMP_TONE3000_DIR", library.getFullPathName());
+        const auto toneDir = library.getChildFile ("Deluxe Reverb 65 Reissue Clean - kumo");
+        library.getChildFile ("Plexi Crunch - otro").createDirectory();
+        juce::File (KUMAMP_NAM_EXAMPLES).getChildFile ("lstm.nam").copyFileTo (library.getChildFile ("Plexi Crunch - otro").getChildFile ("Plexi 3.nam"));
+        kumamp::t3k::Tone tone;
+        tone.id = 51649;
+        tone.title = "Deluxe Reverb '65 Reissue Clean";
+        tone.creator = "kumo";
+        tone.license = "t3k";
+        juce::Array<kumamp::t3k::Model> variants;
+        int id = 1;
+        for (const char* name : { "Fender DRRI | Clean | Room Only | Full Rig", "Fender DRRI | Clean | SM57 + Royer R-121 | Full Rig",
+                                  "Fender DRRI | Clean | SM57 + Royer R-121 + Room | Full Rig" })
+        {
+            kumamp::t3k::Model m;
+            m.id = id++;
+            m.name = name;
+            variants.add (m);
+        }
+        kumamp::t3k::writeToneFolder (toneDir, tone, variants);
+        const auto modelFile = toneDir.getChildFile (kumamp::t3k::modelFileName (variants[1]));
+        juce::File (KUMAMP_NAM_EXAMPLES).getChildFile ("wavenet.nam").copyFileTo (modelFile);
+        if (const auto* node = engine.getModel().findNode (ampNode))
+            if (auto* block = dynamic_cast<kumamp::DSPBlock*> (engine.getStore (node->store).get()))
+                block->loadFile (0, modelFile.getFullPathName().toStdString());
+        for (auto* child : sections())
+            if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
+            {
+                gridView->selectNode (kumamp::kInvalidNode);
+                pump (20);
+                gridView->selectNode (ampNode);
+            }
+        pump (400);
+        allOk = save ("editor_amp_variants.png") && allOk;
+
+        // The model selector lists the library: "Mis tonos (TONE3000)" with one submenu per tone.
+        juce::ComboBox* modelCombo = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (modelCombo == nullptr)
+                    if (auto* combo = dynamic_cast<juce::ComboBox*> (child); combo != nullptr && combo->getText().endsWith (".nam"))
+                        modelCombo = combo;
+                find (*child);
+            }
+        };
+        find (*editor);
+        int libraryItems = 0, toneMenus = 0;
+        bool heading = false;
+        if (modelCombo != nullptr)
+            for (juce::PopupMenu::MenuItemIterator it (*modelCombo->getRootMenu(), true); it.next();)
+            {
+                const auto& item = it.getItem();
+                heading = heading || (item.isSectionHeader && item.text.startsWith ("Mis tonos"));
+                toneMenus += item.subMenu != nullptr ? 1 : 0;
+                libraryItems += item.itemID >= 20000 ? 1 : 0;
+            }
+        std::printf ("library in model selector: heading %d, %d tone menus, %d models\n", (int) heading, toneMenus, libraryItems);
+        allOk = allOk && modelCombo != nullptr && heading && toneMenus == 2 && libraryItems == 2;
+
+        library.deleteRecursively();
+        setTestEnv ("KUMAMP_TONE3000_DIR", {});
+    }
+
+    // TONE3000 model chooser (fake tone, nothing is downloaded).
+    for (auto* child : sections())
+        if (auto* picker = dynamic_cast<kumamp::Tone3000Picker*> (child))
+        {
+            kumamp::t3k::Tone tone;
+            tone.title = "Deluxe Reverb '65 Reissue Clean";
+            tone.creator = "kumo";
+            tone.license = "t3k";
+            juce::Array<kumamp::t3k::Model> models;
+            for (const char* name : { "Fender DRRI | Clean | Room Only | Full Rig", "Fender DRRI | Clean | SM57 + Royer R-121 | Full Rig",
+                                      "Fender DRRI | Clean | SM57 + Royer R-121 + Room | Full Rig" })
+            {
+                kumamp::t3k::Model m;
+                m.name = name;
+                m.size = "standard";
+                models.add (m);
+            }
+            picker->show (tone, models);
+            pump (60);
+            allOk = save ("editor_tone3000_picker.png") && allOk;
+            picker->setVisible (false);
+        }
 
     // Small screens: the whole interface at 70 %.
     if (kumEditor != nullptr)

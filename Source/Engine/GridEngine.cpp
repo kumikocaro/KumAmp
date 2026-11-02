@@ -573,13 +573,16 @@ void GridEngine::loadDefaultPreset()
     m.connect ({ previous, 0 }, m.addNode (NodeKind::Output));
     commitModel (std::move (m));
 
-    auto setScene = [&] (bool wahOn, bool octOn, bool chorusOn, bool delayOn, float delayMix, float delayMs,
+    // Delay and reverb start bypassed in every scene (dry starting point); their
+    // settings are already dialled in per scene for when they are switched on.
+    auto setScene = [&] (bool wahOn, bool octOn, bool chorusOn, float delayMix, float delayMs,
                          float reverbMix, float midBoostDb)
     {
         wah->setBypassed (! wahOn);
         oct->setBypassed (! octOn);
         chorus->setBypassed (! chorusOn);
-        delay->setBypassed (! delayOn);
+        delay->setBypassed (true);
+        reverb->setBypassed (true);
         delay->setParam (DigitalDelayBlock::Mix, delayMix);
         delay->setParam (DigitalDelayBlock::TimeMs, delayMs);
         delay->setParam (DigitalDelayBlock::Feedback, 30.0f);
@@ -593,13 +596,13 @@ void GridEngine::loadDefaultPreset()
         oct->setParam (OctaverBlock::UpDb, -12.0f);
     };
 
-    setScene (false, false, false, true, 25.0f, 420.0f, 22.0f, 0.0f);   // A: Crunch Ambient
+    setScene (false, false, false, 25.0f, 420.0f, 22.0f, 0.0f);   // A: Crunch Ambient
     storeScene (0);
-    setScene (false, false, false, true, 32.0f, 480.0f, 18.0f, 3.0f);   // B: Lead (mid push)
+    setScene (false, false, false, 32.0f, 480.0f, 18.0f, 3.0f);   // B: Lead (mid push)
     storeScene (1);
-    setScene (false, false, true, false, 25.0f, 420.0f, 30.0f, 0.0f);   // C: Chorus Clean
+    setScene (false, false, true, 25.0f, 420.0f, 30.0f, 0.0f);    // C: Chorus Clean
     storeScene (2);
-    setScene (false, true, false, true, 20.0f, 380.0f, 20.0f, 0.0f);    // D: Octave Fuzz
+    setScene (false, true, false, 20.0f, 380.0f, 20.0f, 0.0f);    // D: Octave Fuzz
     storeScene (3);
 
     SceneBank::apply (editedScenes.scenes[0], [this] (StoreId id) { return getStore (id).get(); });

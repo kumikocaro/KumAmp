@@ -227,12 +227,13 @@ Cada bloque consume entre 0,03 % y 0,45 % de un núcleo de Apple Silicon (medido
 `IN → Wah → Oct → Amp (NAM) → Cab (IR) → EQ → Chorus → Delay → Reverb → OUT`
 
 Sin modelo ni IR cargados, los bloques Amp y Cab dejan pasar la señal sin cambios. La Macro 1 (pedal de expresión) controla el wah.
+El delay y el reverb arrancan apagados en todas las escenas (sus ajustes por escena ya están cargados para cuando los enciendas).
 
 | Escena | Contenido |
 |--------|-----------|
-| A | Crunch Ambient: delay y reverb |
-| B | Lead: empuje de medios y delay más presente |
-| C | Chorus Clean: chorus, sin delay |
+| A | Crunch Ambient: delay 420 ms y reverb listos para encender |
+| B | Lead: empuje de medios, delay 480 ms |
+| C | Chorus Clean: chorus |
 | D | Octave Fuzz: octaver -1 y +1 |
 
 ## Validación
@@ -259,6 +260,21 @@ Sin modelo ni IR cargados, los bloques Amp y Cab dejan pasar la señal sin cambi
 3. Sincronización de tempo del host para delays y modulaciones, más tap tempo.
 4. Medidores en el panel: reducción de ganancia del compresor y estado del gate.
 5. Editor: mover bloques arrastrando, deshacer/rehacer y cambiar el tipo de un bloque.
+
+## Presets
+
+Pestaña **PRESETS**: guarda la cadena completa (bloques, las 4 escenas, macros, gate, pitch y volumen de
+salida) como archivos `.kumamp` en `Documentos/KumAmp/Presets`. Las subcarpetas son categorías (packs de
+autor). Los modelos `.nam` / IRs se referencian por ruta; si faltan, KumAmp los busca por ruta relativa y por
+nombre dentro de la carpeta del preset y de `Documentos/KumAmp`, así un pack con sus archivos se puede
+compartir comprimido.
+
+## TONE3000
+
+El bloque Amp tiene un botón **TONE3000**: abre tone3000.com en el navegador, inicias sesión con tu cuenta,
+eliges un tono y KumAmp descarga el modelo elegido en `Documentos/KumAmp/TONE3000/<tono>` (con `tone.txt`:
+creador, licencia y enlace) y lo carga. Usa la API v1 de TONE3000 (OAuth 2.0 + PKCE con redirect a
+`127.0.0.1`); la clave pública está en `KUMAMP_T3K_PUBLISHABLE_KEY` (CMake). El token vive solo en memoria.
 
 ## Licencia
 

@@ -4,6 +4,12 @@
 
 namespace kumamp
 {
+namespace
+{
+    constexpr int kOpenLibraryId = 9998;    // file combo: open Documents/KumAmp/TONE3000
+    constexpr int kLibraryBaseId = 20000;   // file combo: downloaded TONE3000 models
+} // namespace
+
 void BlockPanel::Pill::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds().toFloat().reduced (1.0f);
@@ -79,8 +85,82 @@ void BlockPanel::populateFileSlot (int slot)
         fs.files->setTextWhenNothingSelected (path.empty() ? "Seleccionar " + juce::String (block->getFileSlotName (slot)) + "..."
                                                            : juce::String ("No encontrado: ") + juce::File (juce::String (path)).getFileName());
     }
+    // NAM amp: the TONE3000 library (Documents/KumAmp/TONE3000), one submenu per tone.
+    fs.library.clear();
+    if (slot == 0 && store->getType() == BlockType::NamAmp)
+    {
+        std::vector<std::pair<juce::String, juce::Array<juce::File>>> tones;
+        for (const auto& entry : juce::RangedDirectoryIterator (t3k::Session::libraryFolder(), false, "*",
+                                                                juce::File::findDirectories))
+        {
+            juce::Array<juce::File> models;
+            for (const auto& model : juce::RangedDirectoryIterator (entry.getFile(), false, "*.nam"))
+                models.add (model.getFile());
+            if (models.isEmpty())
+                continue;
+            models.sort();
+            t3k::Tone tone;
+            juce::Array<t3k::Model> unused;
+            const auto title = t3k::readToneFolder (entry.getFile(), tone, unused)
+                                   ? tone.title + (tone.creator.isNotEmpty() ? juce::String (juce::CharPointer_UTF8 (" \xe2\x80\x94 ")) + tone.creator : juce::String())
+                                   : entry.getFile().getFileName();
+            tones.emplace_back (title, models);
+        }
+        std::sort (tones.begin(), tones.end(), [] (const auto& a, const auto& b) { return a.first.compareNatural (b.first, false) < 0; });
+
+        fs.files->addSeparator();
+        fs.files->addSectionHeading ("Mis tonos (TONE3000)");
+        for (auto& [title, models] : tones)
+        {
+            juce::PopupMenu sub;
+            for (const auto& model : models)
+            {
+                fs.library.add (model);
+                sub.addItem (kLibraryBaseId + fs.library.size() - 1, model.getFileNameWithoutExtension(), true, model == current);
+            }
+            fs.files->getRootMenu()->addSubMenu (title + "  (" + juce::String (models.size()) + ")", sub, true, nullptr,
+                                                 current.isAChildOf (models.getFirst().getParentDirectory()));
+        }
+        if (tones.empty())
+            fs.files->addItem (juce::CharPointer_UTF8 ("Todav\xc3\xad" "a no descargaste tonos: us\xc3\xa1 el bot\xc3\xb3n TONE3000"), -1);
+        fs.files->setItemEnabled (-1, false);
+        fs.files->addItem ("Abrir carpeta de tonos", kOpenLibraryId);
+    }
+
     fs.files->addSeparator();
     fs.files->addItem (juce::CharPointer_UTF8 ("Buscar archivo\xe2\x80\xa6"), 9999);
+
+    if (slot == 0 && variants != nullptr)
+        populateVariants (current);
+}
+
+void BlockPanel::populateVariants (const juce::File& currentModel)
+{
+    variantModels.clear();
+    variants->clear (juce::dontSendNotification);
+    variantFolder = currentModel.getParentDirectory();
+    const bool isTone = currentModel.existsAsFile() && t3k::readToneFolder (variantFolder, variantTone, variantModels)
+                        && variantModels.size() > 1;
+    variants->setVisible (isTone);
+    if (isTone)
+    {
+        int downloaded = 0;
+        for (int i = 0; i < variantModels.size(); ++i)
+        {
+            const auto& m = variantModels.getReference (i);
+            const bool here = variantFolder.getChildFile (t3k::modelFileName (m)).existsAsFile();
+            downloaded += here ? 1 : 0;
+            // Check mark = on disk (instant); arrow = downloads from TONE3000 when picked.
+            variants->addItem (juce::String (juce::CharPointer_UTF8 (here ? "\xe2\x9c\x93  " : "\xe2\x86\x93  ")) + m.name, i + 1);
+            if (t3k::modelFileName (m) == currentModel.getFileName())
+                variants->setSelectedId (i + 1, juce::dontSendNotification);
+        }
+        variants->setTextWhenNothingSelected ("Variantes (" + juce::String (variantModels.size()) + ")");
+        variants->setTooltip (juce::String (variantModels.size()) + " variantes de \"" + variantTone.title + "\", "
+                              + juce::String (downloaded) + " descargadas. " + juce::String (juce::CharPointer_UTF8 ("\xe2\x9c\x93")) + " = en el disco, "
+                              + juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x93")) + " = se descarga al elegirla");
+    }
+    resized();
 }
 
 void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
@@ -89,6 +169,10 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
     fileSlots.clear();
     chips.clear();
     eqView.reset();
+    tone3000Button.reset();
+    tone3000Credit.reset();
+    variants.reset();
+    variantModels.clear();
     syncParam = divisionParam = -1;
     store = std::move (newStore);
 
@@ -125,6 +209,21 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
                     chooseFile (slot);
                     return;
                 }
+                if (id == kOpenLibraryId)
+                {
+                    populateFileSlot (slot);
+                    const auto folder = t3k::Session::libraryFolder();
+                    folder.createDirectory();
+                    folder.startAsProcess();
+                    return;
+                }
+                if (id >= kLibraryBaseId)
+                {
+                    const auto& library = fileSlots[(size_t) slot].library;
+                    if (id - kLibraryBaseId < library.size())
+                        b->loadFile (slot, library[id - kLibraryBaseId].getFullPathName().toStdString());
+                    return;
+                }
                 const auto& choices = fileSlots[(size_t) slot].choices;
                 if (id - 1 < choices.size())
                     b->loadFile (slot, choices[id - 1].getFullPathName().toStdString());
@@ -134,6 +233,48 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
             addAndMakeVisible (*fs.browse);
             fileSlots.push_back (std::move (fs));
             populateFileSlot (slot);
+        }
+
+        if (store->getType() == BlockType::NamAmp)
+        {
+            tone3000Button = std::make_unique<juce::TextButton> ("TONE3000");
+            tone3000Button->setTooltip ("Elegir un amp en tone3000.com y cargarlo directo");
+            tone3000Button->setColour (juce::TextButton::buttonColourId, theme::accent.withAlpha (0.35f));
+            tone3000Button->onClick = [this]
+            {
+                if (onBrowseTone3000 && store != nullptr && tone3000Button != nullptr)
+                    onBrowseTone3000 (store, *tone3000Button);
+            };
+            addAndMakeVisible (*tone3000Button);
+            // Attribution required by the TONE3000 API terms.
+            tone3000Credit = std::make_unique<juce::HyperlinkButton> ("Powered by TONE3000", juce::URL ("https://www.tone3000.com"));
+            tone3000Credit->setFont (juce::FontOptions (12.0f), false, juce::Justification::centredLeft);
+            tone3000Credit->setColour (juce::HyperlinkButton::textColourId, theme::textDim);
+            addAndMakeVisible (*tone3000Credit);
+
+            variants = std::make_unique<juce::ComboBox>();
+            variants->setTooltip ("Otras variantes de este tono de TONE3000");
+            auto* combo = variants.get();
+            combo->onChange = [this, combo]
+            {
+                const int index = combo->getSelectedId() - 1;
+                if (index < 0 || index >= variantModels.size() || store == nullptr)
+                    return;
+                const auto& model = variantModels.getReference (index);
+                const auto file = variantFolder.getChildFile (t3k::modelFileName (model));
+                if (file.existsAsFile())
+                {
+                    if (auto* b = dynamic_cast<DSPBlock*> (store.get()))
+                        b->loadFile (0, file.getFullPathName().toStdString());
+                }
+                else if (onTone3000Variant)
+                {
+                    onTone3000Variant (store, variantTone, model);
+                }
+            };
+            addChildComponent (*combo);
+            if (auto* b = dynamic_cast<DSPBlock*> (store.get()))
+                populateVariants (juce::File (juce::String (b->getFilePath (0))));
         }
     }
 
@@ -361,11 +502,25 @@ void BlockPanel::resized()
     for (auto& fs : fileSlots)
     {
         auto row = left.removeFromTop (44);
+        if (tone3000Button != nullptr && &fs == &fileSlots.front())
+        {
+            tone3000Button->setBounds (row.removeFromRight (104).reduced (0, 4));
+            row.removeFromRight (6);
+        }
         fs.browse->setBounds (row.removeFromRight (48).reduced (2));
         row.removeFromRight (8);
         fs.files->setBounds (row);
         left.removeFromTop (8);
     }
+    if (variants != nullptr && variants->isVisible())
+    {
+        auto row = left.removeFromTop (32);
+        tone3000Credit->setBounds (row.removeFromRight (140));
+        row.removeFromRight (8);
+        variants->setBounds (row);
+    }
+    else if (tone3000Credit != nullptr)
+        tone3000Credit->setBounds (left.removeFromTop (18).removeFromRight (150));
 
     auto chipRow = left.removeFromBottom (36);
     info.setBounds (chipRow.removeFromRight (36));

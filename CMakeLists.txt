@@ -158,6 +158,8 @@ set(KUMAMP_JUCE_SOURCES
     Source/DSP/Amp/NamProfileInfo.cpp
     Source/DSP/Cab/IrLoaderBlock.cpp
     Source/Tuner/Tuner.cpp
+    Source/Presets/PresetManager.cpp
+    Source/Tone3000/Tone3000.cpp
     Source/UI/TunerView.cpp)
 
 set(KUMAMP_UI_SOURCES
@@ -167,7 +169,9 @@ set(KUMAMP_UI_SOURCES
     Source/UI/GridView.cpp
     Source/UI/BlockPanel.cpp
     Source/UI/EqView.cpp
-    Source/UI/SettingsView.cpp)
+    Source/UI/SettingsView.cpp
+    Source/UI/PresetBrowser.cpp
+    Source/UI/Tone3000Picker.cpp)
 
 # AU solo existe en macOS.
 if(APPLE)
@@ -208,6 +212,12 @@ target_compile_definitions(KumAmp PUBLIC
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_REPORT_APP_USAGE=0)
 
+# TONE3000 API publishable key (t3k_pub_...): the OAuth client_id, safe to ship
+# in a client. The secret key (t3k_cs_...) must never be put here.
+set(KUMAMP_T3K_PUBLISHABLE_KEY "t3k_pub_BB7N5zgwXuDL_tjPaNwT4_fE5t1D91JI" CACHE STRING "Clave publica de la API de TONE3000")
+set_property(SOURCE Source/Tone3000/Tone3000.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    KUMAMP_T3K_PUBLISHABLE_KEY="${KUMAMP_T3K_PUBLISHABLE_KEY}")
+
 if(KUMAMP_ASIO)
     target_compile_definitions(KumAmp PUBLIC JUCE_ASIO=1)
     target_include_directories(KumAmp SYSTEM PRIVATE ${asiosdk_SOURCE_DIR}/common)
@@ -220,6 +230,7 @@ target_link_libraries(KumAmp
         kumamp_compile_flags
         juce::juce_audio_utils
         juce::juce_dsp
+        juce::juce_cryptography
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -247,12 +258,13 @@ if(KUMAMP_BUILD_TESTS)
     juce_add_console_app(KumAmpIntegrationTests PRODUCT_NAME "KumAmpIntegrationTests")
     target_sources(KumAmpIntegrationTests PRIVATE Tests/IntegrationTests.cpp ${KUMAMP_JUCE_SOURCES} ${KUMAMP_UI_SOURCES})
     target_compile_definitions(KumAmpIntegrationTests PRIVATE
-        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
         KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
         KUMAMP_SNAPSHOT_DIR="${CMAKE_BINARY_DIR}/snapshots")
     target_link_libraries(KumAmpIntegrationTests PRIVATE
         KumAmpCore KumAmpNam kumamp_compile_flags
         juce::juce_audio_formats juce::juce_audio_processors juce::juce_dsp juce::juce_data_structures juce::juce_gui_basics
+        juce::juce_cryptography
         juce::juce_recommended_config_flags)
     add_test(NAME KumAmpIntegrationTests COMMAND KumAmpIntegrationTests)
 
@@ -278,5 +290,5 @@ if(KUMAMP_BUILD_TESTS)
         KUMAMP_SNAPSHOT_DIR="${CMAKE_BINARY_DIR}/snapshots")
     target_link_libraries(KumAmpUiSnapshot PRIVATE
         KumAmpCore KumAmpNam kumamp_compile_flags
-        juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+        juce::juce_audio_utils juce::juce_dsp juce::juce_cryptography juce::juce_recommended_config_flags)
 endif()

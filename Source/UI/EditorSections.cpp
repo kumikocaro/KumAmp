@@ -348,10 +348,7 @@ SceneBar::SceneBar()
     previous.onClick = [this] { if (onSceneSelected) onSceneSelected ((activeScene + 3) % 4); };
     next.onClick     = [this] { if (onSceneSelected) onSceneSelected ((activeScene + 1) % 4); };
     store.onClick    = [this] { if (onStore) onStore(); };
-    undo.onClick     = [this] { if (onUndo) onUndo(); };
-    redo.onClick     = [this] { if (onRedo) onRedo(); };
-    menu.onClick     = [this] { if (onMenu) onMenu (menu); };
-    for (auto* b : { &previous, &next, &store, &undo, &redo, &menu })
+    for (auto* b : { &previous, &next, &store })
         addAndMakeVisible (*b);
 
     prefix.setJustificationType (juce::Justification::centredRight);
@@ -385,16 +382,10 @@ void SceneBar::setSceneName (const juce::String& newName)
         name.setText (newName.isEmpty() ? juce::String ("Sin nombre") : newName, juce::dontSendNotification);
 }
 
-void SceneBar::setUndoState (bool canUndo, bool canRedo)
-{
-    undo.setEnabled (canUndo);
-    redo.setEnabled (canRedo);
-}
-
 void SceneBar::paint (juce::Graphics& g)
 {
     g.setColour (theme::border);
-    g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
+    g.drawHorizontalLine (0, 0.0f, (float) getWidth());
 }
 
 void SceneBar::resized()
@@ -406,11 +397,6 @@ void SceneBar::resized()
     previous.setBounds (area.removeFromLeft (36));
     next.setBounds (area.removeFromLeft (36));
 
-    menu.setBounds (area.removeFromRight (44));
-    area.removeFromRight (24);
-    redo.setBounds (area.removeFromRight (40));
-    undo.setBounds (area.removeFromRight (40));
-    area.removeFromRight (24);
     store.setBounds (area.removeFromRight (44));
 
     const int centreWidth = std::min (area.getWidth(), 460);
