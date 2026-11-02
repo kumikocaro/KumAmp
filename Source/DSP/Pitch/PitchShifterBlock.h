@@ -10,7 +10,8 @@ namespace kumamp
 {
 /**
     Grid block wrapping WsolaPitchShifter: -12..+12 semitones plus fine tune,
-    dry/wet mix (harmoniser use), grain size (latency vs. smoothness) and glide
+    dry/wet mix (harmoniser use), splice window (chord cleanliness vs. worst-case
+    latency) and glide
     (whammy-style sweeps when driven by a macro / expression pedal), and the
     instrument: Guitarra (lowest latency) or Bajo (clean splices on low notes).
 
@@ -20,7 +21,7 @@ namespace kumamp
 class PitchShifterBlock final : public DSPBlock
 {
 public:
-    enum Param { Semitones, Cents, Mix, GrainMs, GlideMs, Instrument, NumParams };
+    enum Param { Semitones, Cents, Mix, WindowMs, GlideMs, Instrument, NumParams };
 
     explicit PitchShifterBlock (StoreId id);
 

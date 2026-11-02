@@ -12,7 +12,7 @@ namespace
         { "semitones", "Semitonos", -12.0f,   12.0f,   0.0f, "st", true  },
         { "cents",     "Cents",     -100.0f, 100.0f,   0.0f, "ct", false },
         { "mix",       "Mezcla",       0.0f, 100.0f, 100.0f, "%",  false },
-        { "grain",     "Grano",        5.0f,  40.0f,  15.0f, "ms", false },
+        { "window",    "Ventana",     20.0f,  60.0f,  45.0f, "ms", false },   // longest splice jump
         { "glide",     "Glide",        0.0f, 1000.0f, 30.0f, "ms", false },
         { "instrument", "Instrumento",  0.0f,    1.0f,  0.0f, "Guitarra|Bajo", true },
     };
@@ -44,7 +44,7 @@ void PitchShifterBlock::resetBlock() noexcept
 void PitchShifterBlock::processBlock (float* left, float* right, int numSamples) noexcept
 {
     const float semis = getParam (Semitones) + getParam (Cents) * 0.01f;
-    shifter.setGrainMs (getParam (GrainMs));
+    shifter.setGrainMs (getParam (WindowMs));
     shifter.setInstrument (getParam (Instrument) >= 0.5f ? WsolaPitchShifter::Instrument::Bass
                                                          : WsolaPitchShifter::Instrument::Guitar);
     shifter.setRatio (semitonesToRatio (semis), getParam (GlideMs));

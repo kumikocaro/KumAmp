@@ -170,13 +170,20 @@ El EQ paramétrico tiene 8 bandas: Bell, Low/High Shelf, Low/High Cut (12, 24, 3
 
 Las escenas guardan valores y estado de bypass de cada bloque y nodo de ruteo. La topología es común a todas, así que cambiar de escena solo mueve objetivos suavizados y el cambio no corta el audio. La escena activa es un parámetro del host (`scene`). "Guardar escena" sobrescribe la escena activa con el estado actual.
 
-### Pitch Shifter (WSOLA)
+### Pitch Shifter (WSOLA adaptativo)
 
-Funciona en el dominio del tiempo y es polifónico: no detecta tono, así que los acordes salen limpios. Dos cabezales de lectura sobre un buffer circular. Cuando hay que empalmar, la posición del cabezal nuevo se elige por correlación cruzada normalizada (±½ periodo de un Mi grave) y se hace un crossfade de igual ganancia entre los dos cabezales, ya en fase.
+Funciona en el dominio del tiempo y es polifónico: no detecta tono. Dos cabezales de lectura sobre un buffer circular;
+cada empalme hace un crossfade entre ellos, ya en fase. El salto de cada empalme es **adaptativo**: una nota se repite
+cada periodo, pero un acorde solo cada periodo común de sus notas (24 ms un Mi abierto, ~41 ms un Sol abierto), así
+que el empalme se hace en cuanto aparece un pico real de correlación normalizada ≥ 0,98 (buscado en una copia a 6 kHz
+y refinado a resolución completa), eligiendo la menor latencia posible. Las notas empalman tras un periodo y los
+acordes cuando su periodo común entra en la ventana (45 ms por defecto, parámetro **Ventana**).
 
 - Rango de -12 a +12 semitonos más cents. Admite glide continuo, tipo whammy (Macro 1 → Transpose, de 0 a +12).
-- Latencia dinámica de entre 0 y ~20 ms (grano de 15 ms). A 0 st la señal sale sin procesar y la latencia es cero.
-- Rubber Band (R3 Live Shifter) queda como alternativa futura: trabaja con un tamaño de bloque fijo, lo que añade latencia, y tiene licencia GPL o comercial.
+- Instrumento **Guitarra** (saltos de 6 a 45 ms) o **Bajo** (hasta 70 ms, correlación de 25 ms para el Si grave).
+- Medido (acordes rasgueados, −2 y −5 st): ruido de empalme en acordes −25 dB (antes −11 dB), notas −30 dB, latencia
+  media ~14 ms (bajando) y ~12 ms (subiendo). A 0 st la señal sale sin procesar y la latencia es cero.
+- Rubber Band y Signalsmith Stretch quedan descartados para tocar en vivo: ~50 ms de latencia por bloque.
 
 ### NAM (Core)
 

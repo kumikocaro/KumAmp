@@ -396,43 +396,73 @@ void testPitchShifterBass (double f0, float semitones)
         minRms = std::min (minRms, rms);
         maxRms = std::max (maxRms, rms);
     }
-    std::printf ("  worst %.2f ct  rms %.3f..%.3f  tracked period %.0f smp\n",
-                 worstCents, minRms, maxRms, ps.getTrackedPeriod());
+    std::printf ("  worst %.2f ct  rms %.3f..%.3f  delay %.0f smp\n",
+                 worstCents, minRms, maxRms, ps.getCurrentDelaySamples());
     CHECK (worstCents < 2.0);
     CHECK (minRms > 0.95 * maxRms);
     CHECK (ps.getCurrentDelaySamples() < kRate * 0.060);
 }
 
-// A guitar chord repeats at the common period of its notes (41 Hz for an open E):
-// guitar mode (the default) must keep the short geometry and latency regardless.
-void testPitchShifterGuitarChord()
+// Splice noise: share (dB) of the output energy that is NOT at the expected
+// (shifted) partials, measured with a DFT at 1 Hz steps up to 2 kHz.
+double spliceNoiseDb (const std::vector<float>& y, size_t start, size_t length, const std::vector<double>& partials)
 {
-    std::puts ("pitch shifter guitar mode: chord keeps guitar geometry");
+    double total = 0.0, onPartials = 0.0;
+    std::vector<double> w (length);
+    for (size_t i = 0; i < length; ++i)
+        w[i] = y[start + i] * (0.5 - 0.5 * std::cos (2.0 * 3.141592653589793 * (double) i / (double) (length - 1)));
+    for (double f = 20.0; f < 2000.0; f += 1.0)
+    {
+        double re = 0.0, im = 0.0;
+        const double step = 2.0 * 3.141592653589793 * f / kRate;
+        for (size_t i = 0; i < length; ++i)
+        {
+            re += w[i] * std::cos (step * (double) i);
+            im -= w[i] * std::sin (step * (double) i);
+        }
+        const double e = re * re + im * im;
+        total += e;
+        for (double p : partials)
+            if (std::abs (f - p) <= 4.0) { onPartials += e; break; }
+    }
+    return 10.0 * std::log10 (std::max (1.0e-12, (total - onPartials) / total));
+}
+
+// Chords only repeat at the common period of their notes (24 ms for an open E):
+// the adaptive splice must find it, so the chord stays clean, at low latency.
+void testPitchShifterGuitarChord (float semitones)
+{
+    std::printf ("pitch shifter open E chord %+.0f st\n", semitones);
     WsolaPitchShifter ps;
     ps.prepare (kRate);
-    ps.setRatio (std::exp2 (-5.0f / 12.0f), 0.0f);
+    ps.setRatio (std::exp2 (semitones / 12.0f), 0.0f);
 
     const double chord[] = { 82.41, 123.47, 164.81, 207.65, 246.94, 329.63 };
     const size_t n = (size_t) kRate * 2;
     std::vector<float> l (n, 0.0f), r;
+    std::vector<double> shifted;
     for (double f0 : chord)
-        for (int k = 1; k <= 8; ++k)
+        for (int k = 1; k <= 6; ++k)
+        {
+            shifted.push_back (f0 * k * std::exp2 (semitones / 12.0));
             for (size_t i = 0; i < n; ++i)
                 l[i] += (float) (0.1 / k * std::sin (2.0 * 3.141592653589793 * f0 * k * (double) i / kRate + 0.3 * k));
+        }
     r = l;
 
-    int bassModeBlocks = 0;
-    float maxDelay = 0.0f;
+    double delaySum = 0.0;
+    int delayCount = 0;
     for (size_t off = 0; off < n; off += kBlock)
     {
         const int len = (int) std::min<size_t> (kBlock, n - off);
         ps.process (l.data() + off, r.data() + off, l.data() + off, r.data() + off, len);
-        bassModeBlocks += ps.getTrackedPeriod() > 0.0f;
-        maxDelay = std::max (maxDelay, ps.getCurrentDelaySamples());
+        if (off > n / 4) { delaySum += ps.getCurrentDelaySamples(); ++delayCount; }
     }
-    std::printf ("  bass-mode blocks %d  max delay %.1f ms\n", bassModeBlocks, maxDelay / kRate * 1000.0);
-    CHECK (bassModeBlocks == 0);
-    CHECK (maxDelay < kRate * 0.022);
+    const double noise = spliceNoiseDb (l, n / 2, (size_t) (kRate * 0.5), shifted);
+    const double latencyMs = delaySum / delayCount / kRate * 1000.0;
+    std::printf ("  splice noise %.1f dB  average latency %.1f ms\n", noise, latencyMs);
+    CHECK (noise < -18.0);       // the fixed-grain shifter (<= 0.1.4) measured -5 to -8 dB here
+    CHECK (latencyMs < 20.0);
 }
 
 void testRateBridge (double hostRate)
@@ -844,7 +874,7 @@ void testRealtimeTracker()
 
     double firstValid = -1.0, worstCents = 0.0;
     for (size_t off = 0; off < x.size(); off += kBlock)
-        tracker.process (x.data() + off, kBlock, [&] (int i, const RealtimePitchTracker::Estimate& e)
+        tracker.process (x.data() + off, (int) std::min<size_t> (kBlock, x.size() - off), [&] (int i, const RealtimePitchTracker::Estimate& e)
         {
             const double t = (double) (off + (size_t) i) / kRate;
             if (e.valid && firstValid < 0.0) firstValid = t;
@@ -964,7 +994,8 @@ int main()
     for (double f0 : { 30.87, 41.20, 46.25 })
         for (float st : { -2.0f, -5.0f })
             testPitchShifterBass (f0, st);
-    testPitchShifterGuitarChord();
+    for (float st : { -2.0f, -5.0f, 5.0f })
+        testPitchShifterGuitarChord (st);
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
     return failures == 0 ? 0 : 1;

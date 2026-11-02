@@ -10,15 +10,13 @@ namespace
 {
     constexpr int kMask = WsolaPitchShifter::kBufferSize - 1;
     constexpr float kUnityEpsilon = 1.0e-5f;
-
-    // Period tracking (bass): runs on the decimated copy at ~6 kHz.
-    constexpr double kCoarseRate     = 6000.0;
-    constexpr float  kTrackMinHz     = 25.0f;   // below a 5-string low B (30.9 Hz) with drop tunings
-    constexpr float  kTrackMaxHz     = 400.0f;
-    constexpr float  kTrackClarity   = 0.6f;
-    constexpr float  kGrainPeriods   = 1.0f;    // jumping one period is the shortest in-phase splice
-    constexpr double kAdaptBelowHz   = 52.0;    // the guitar geometry is clean down to ~A1 (55 Hz)
     static_assert ((WsolaPitchShifter::kBufferSize & kMask) == 0, "buffer size must be a power of two");
+
+    constexpr double kCoarseRate    = 6000.0;
+    constexpr int    kCheckInterval = 32;      // samples between splice searches while waiting
+    constexpr float  kThreshold     = 0.98f;   // normalised correlation of a clean splice
+    constexpr int    kFineRadius    = 2;       // full-rate refinement: +/- this many coarse steps
+    constexpr float  kFadeFraction  = 0.5f;    // crossfade = half the jump, within [fadeMin, fadeMax]
 } // namespace
 
 void WsolaPitchShifter::prepare (double newSampleRate)
@@ -31,8 +29,6 @@ void WsolaPitchShifter::prepare (double newSampleRate)
 
     decimation = std::max (1, (int) std::lround (sampleRate / kCoarseRate));
     coarse.assign (kCoarseSize, 0.0f);
-    nsdf.assign (kCoarseSize / 4, 0.0f);
-    trackWindow.assign (kCoarseSize / 2, 0.0f);
 
     // RBJ low-pass at ~35 % of the decimated Nyquist (anti-alias for the coarse copy).
     {
@@ -58,10 +54,8 @@ void WsolaPitchShifter::reset() noexcept
     std::fill (analysis.begin(), analysis.end(), 0.0f);
     std::fill (coarse.begin(), coarse.end(), 0.0f);
 
-    coarseWrite = decimationPhase = 0;
+    coarseWrite = decimationPhase = sinceCheck = 0;
     lpZ1 = lpZ2 = 0.0f;
-    trackedPeriod = 0.0f;
-
     writePos   = 0;
     delays[0]  = delays[1] = (float) kMinDelay;
     activeHead = 0;
@@ -72,12 +66,17 @@ void WsolaPitchShifter::reset() noexcept
 
 void WsolaPitchShifter::setGrainMs (float milliseconds) noexcept
 {
-    requestedGrainMs = std::clamp (milliseconds, 5.0f, 40.0f);
+    requestedMaxJumpMs = std::clamp (milliseconds, 10.0f, 80.0f);
+    updateGeometry();
 }
 
 void WsolaPitchShifter::setInstrument (Instrument newInstrument) noexcept
 {
-    instrument = newInstrument;
+    if (instrument != newInstrument)
+    {
+        instrument = newInstrument;
+        updateGeometry();
+    }
 }
 
 void WsolaPitchShifter::setRatio (float newTargetRatio, float glideMilliseconds) noexcept
@@ -95,103 +94,17 @@ bool WsolaPitchShifter::isGliding() const noexcept
 
 void WsolaPitchShifter::updateGeometry() noexcept
 {
-    const auto sr = (float) sampleRate;
-    grainLength       = std::clamp ((int) std::lround (requestedGrainMs * sr * 0.001f), 64, kBufferSize / 4);
-    // Half the period of a low E (82 Hz) is enough to always find an in-phase splice.
-    searchRadius      = std::clamp ((int) (sr / 160.0f), 16, grainLength / 2);
-    correlationLength = std::clamp ((int) (sr * 0.005f), 64, 2048);
+    const auto ms = (float) sampleRate * 0.001f;
+    const bool bass = instrument == Instrument::Bass;
 
-    if (trackedPeriod > 0.0f)
-    {
-        // Long period (bass): one full period of correlation, half a period of search either side.
-        grainLength       = std::clamp ((int) std::lround (kGrainPeriods * trackedPeriod), grainLength, kBufferSize / 4);
-        searchRadius      = std::max (searchRadius, std::min ((int) std::lround (0.55f * trackedPeriod), grainLength / 2));
-        correlationLength = std::clamp ((int) std::lround (trackedPeriod), correlationLength, 4096);
-    }
-
-    // Must stay shorter than the time between splices at the extreme ratios (0.5 / 2.0).
-    fadeLength        = std::max (16, grainLength / 4);
-}
-
-void WsolaPitchShifter::estimatePeriod() noexcept
-{
-    constexpr int cMask = kCoarseSize - 1;
-    const double coarseRate = sampleRate / decimation;
-    const int maxLag = std::min ((int) nsdf.size() - 1, (int) std::ceil (coarseRate / kTrackMinHz));
-    const int minLag = std::max (2, (int) (coarseRate / kTrackMaxHz));
-    const int window = std::min (2 * maxLag, kCoarseSize / 2);
-    const int start  = coarseWrite - window;   // oldest sample of the window
-
-    // Linear copy so the lag loops run without ring masking.
-    float* w = trackWindow.data();
-    for (int n = 0; n < window; ++n) w[n] = coarse[(size_t) ((start + n) & cMask)];
-    auto x = [w] (int n) { return w[n]; };
-
-    float energy = 0.0f;
-    for (int n = 0; n < window; ++n) energy += x (n) * x (n);
-    if (energy < 1.0e-6f * (float) window)
-        return;   // silence: keep the previous geometry
-
-    // NSDF (McLeod): 2 r(tau) / m(tau), with m updated incrementally.
-    float m = 2.0f * energy;
-    for (int tau = 0; tau <= maxLag; ++tau)
-    {
-        if (tau > 0)
-            m -= x (tau - 1) * x (tau - 1) + x (window - tau) * x (window - tau);
-        // Four accumulators: lets the compiler vectorise without -ffast-math.
-        const float* a = w + tau;
-        const int count = window - tau;
-        float r0 = 0.0f, r1 = 0.0f, r2 = 0.0f, r3 = 0.0f;
-        int n = 0;
-        for (; n + 4 <= count; n += 4)
-        {
-            r0 += a[n]     * w[n];
-            r1 += a[n + 1] * w[n + 1];
-            r2 += a[n + 2] * w[n + 2];
-            r3 += a[n + 3] * w[n + 3];
-        }
-        for (; n < count; ++n) r0 += a[n] * w[n];
-        const float r = (r0 + r1) + (r2 + r3);
-        nsdf[(size_t) tau] = m > 1.0e-9f ? 2.0f * r / m : 0.0f;
-    }
-
-    // Key maxima of the positive lobes after the first negative crossing; first one near the top wins.
-    int firstKey = -1;
-    float globalMax = 0.0f;
-    for (int pass = 0; pass < 2 && firstKey < 0; ++pass)
-    {
-        int tau = 1;
-        while (tau <= maxLag && nsdf[(size_t) tau] > 0.0f) ++tau;
-        while (tau <= maxLag)
-        {
-            while (tau <= maxLag && nsdf[(size_t) tau] <= 0.0f) ++tau;
-            int keyLag = -1;
-            float keyVal = 0.0f;
-            while (tau <= maxLag && nsdf[(size_t) tau] > 0.0f)
-            {
-                if (nsdf[(size_t) tau] > keyVal) { keyVal = nsdf[(size_t) tau]; keyLag = tau; }
-                ++tau;
-            }
-            if (keyLag < minLag || keyLag >= maxLag) continue;
-            if (pass == 0) globalMax = std::max (globalMax, keyVal);
-            else if (keyVal >= 0.9f * globalMax) { firstKey = keyLag; break; }
-        }
-    }
-
-    if (firstKey < 0 || nsdf[(size_t) firstKey] < kTrackClarity)
-    {
-        trackedPeriod = 0.0f;   // chord / noise: guitar-sized geometry
-        return;
-    }
-
-    // Parabolic refinement, then back to full-rate samples.
-    const float a = nsdf[(size_t) firstKey - 1], b = nsdf[(size_t) firstKey], c = nsdf[(size_t) firstKey + 1];
-    const float den = a - 2.0f * b + c;
-    const float lag = (float) firstKey + (std::abs (den) > 1.0e-9f ? 0.5f * (a - c) / den : 0.0f);
-    const float period = lag * (float) decimation;
-
-    // Periods the default geometry already handles (guitar range) need no special treatment.
-    trackedPeriod = period > (float) (sampleRate / kAdaptBelowHz) ? period : 0.0f;
+    // Bass: a low B (31 Hz) repeats every 32 ms, so jumps and windows scale up.
+    minJump = (bass ? 10.0f : 6.0f) * ms;
+    maxJump = std::max (minJump + 4.0f * ms, (bass ? std::max (70.0f, requestedMaxJumpMs) : requestedMaxJumpMs) * ms);
+    maxJump = std::min (maxJump, (float) (kBufferSize / 2));
+    correlationLength = std::clamp ((int) std::lround ((bass ? 25.0f : 10.0f) * ms), 64, kBufferSize / 8);
+    coarseCorrelationLength = std::max (8, correlationLength / decimation);
+    fadeMin = 2.0f * ms;
+    fadeMax = 8.0f * ms;
 }
 
 float WsolaPitchShifter::read (const std::vector<float>& buffer, float delay) const noexcept
@@ -213,125 +126,133 @@ float WsolaPitchShifter::read (const std::vector<float>& buffer, float delay) co
     return ((c3 * t + c2) * t + c1) * t + x0;
 }
 
-float WsolaPitchShifter::correlationScore (int referenceEnd, int candidateEnd, int step) const noexcept
+float WsolaPitchShifter::coarseScore (float reference, float candidate, int length) const noexcept
 {
-    float correlation = 0.0f, energy = 1.0e-9f;
-    for (int k = 0; k < correlationLength; k += step)
-    {
-        const float a = analysis[(size_t) ((referenceEnd - k) & kMask)];
-        const float b = analysis[(size_t) ((candidateEnd - k) & kMask)];
-        correlation += a * b;
-        energy      += b * b;
-    }
-    return correlation / std::sqrt (energy);
-}
-
-float WsolaPitchShifter::coarseScore (int referenceEnd, int candidateEnd, int length) const noexcept
-{
+    // Full-rate delay d maps to coarse delay (d - decimationPhase) / decimation.
     constexpr int cMask = kCoarseSize - 1;
-    float correlation = 0.0f, energy = 1.0e-9f;
+    const int newest = coarseWrite - 1;
+    const int r = newest - (int) std::lround ((reference - (float) decimationPhase) / (float) decimation);
+    const int c = newest - (int) std::lround ((candidate - (float) decimationPhase) / (float) decimation);
+    float xy = 0.0f, xx = 1.0e-9f, yy = 1.0e-9f;
     for (int k = 0; k < length; ++k)
     {
-        const float a = coarse[(size_t) ((referenceEnd - k) & cMask)];
-        const float b = coarse[(size_t) ((candidateEnd - k) & cMask)];
-        correlation += a * b;
-        energy      += b * b;
+        const float a = coarse[(size_t) ((r - k) & cMask)];
+        const float b = coarse[(size_t) ((c - k) & cMask)];
+        xy += a * b;
+        xx += a * a;
+        yy += b * b;
     }
-    return correlation / std::sqrt (energy);
+    return xy / std::sqrt (xx * yy);
 }
 
-float WsolaPitchShifter::findBestDelay (float outgoingDelay, float lowest, float highest) const noexcept
+float WsolaPitchShifter::fineScore (float reference, float candidate, int length) const noexcept
 {
-    const float centre = 0.5f * (lowest + highest);
-    const int roundedOutgoing = (int) std::lround (outgoingDelay);
-    const float fraction = outgoingDelay - (float) roundedOutgoing;
-    const int referenceEnd = writePos - roundedOutgoing;
-
-    float referenceEnergy = 0.0f;
-    for (int k = 0; k < correlationLength; k += 2)
+    const int r = writePos - (int) std::lround (reference);
+    const int c = writePos - (int) std::lround (candidate);
+    float xy = 0.0f, xx = 1.0e-9f, yy = 1.0e-9f;
+    for (int k = 0; k < length; ++k)
     {
-        const float a = analysis[(size_t) ((referenceEnd - k) & kMask)];
-        referenceEnergy += a * a;
+        const float a = analysis[(size_t) ((r - k) & kMask)];
+        const float b = analysis[(size_t) ((c - k) & kMask)];
+        xy += a * b;
+        xx += a * a;
+        yy += b * b;
     }
+    return xy / std::sqrt (xx * yy);
+}
 
-    const int lo = (int) std::ceil (lowest);
-    const int hi = (int) std::floor (highest);
+float WsolaPitchShifter::findSplice (float current, float lowest, float highest, bool lowestDelayFirst, bool force) noexcept
+{
+    if (highest < lowest)
+        return -1.0f;
 
-    if (referenceEnergy < 1.0e-8f || hi <= lo)
-        return std::clamp (centre, lowest, highest);  // silence: any splice point is inaudible
-
-    int best = lo;
-    float bestScore = -1.0e30f;
-
-    if (trackedPeriod > 0.0f && decimation > 1)
+    // Silence: any splice point is inaudible.
     {
-        // Long windows (bass): search on the decimated copy, then refine +/- one decimation step.
-        // Full-rate delay d maps to coarse delay (d - decimationPhase) / decimation.
-        const int newest = coarseWrite - 1;
-        const int length = std::max (8, correlationLength / decimation);
-        const int coarseRef = newest - (int) std::lround ((outgoingDelay - (float) decimationPhase) / (float) decimation);
-        const int cLo = (int) std::ceil  ((float) (lo - decimationPhase) / (float) decimation);
-        const int cHi = (int) std::floor ((float) (hi - decimationPhase) / (float) decimation);
-
-        for (int c = cLo; c <= cHi; ++c)
+        constexpr int cMask = kCoarseSize - 1;
+        float energy = 0.0f;
+        for (int k = 0; k < coarseCorrelationLength; ++k)
         {
-            const float score = coarseScore (coarseRef, newest - c, length);
-            if (score > bestScore) { bestScore = score; best = c * decimation + decimationPhase; }
+            const float a = coarse[(size_t) ((coarseWrite - 1 - k) & cMask)];
+            energy += a * a;
         }
+        if (energy < 1.0e-7f * (float) coarseCorrelationLength)
+            return lowestDelayFirst ? lowest : highest;
+    }
 
-        const int centreLag = std::clamp (best, lo, hi);
-        bestScore = -1.0e30f;
-        for (int lag = std::max (lo, centreLag - decimation); lag <= std::min (hi, centreLag + decimation); ++lag)
+    // Coarse grid, scanned so the lowest resulting latency comes first. Only interior
+    // local maxima count (see class comment); the first one >= kThreshold wins.
+    const float step = (float) decimation;
+    const float start = lowestDelayFirst ? lowest : highest;
+    const float dir   = lowestDelayFirst ? step : -step;
+    const int count   = (int) ((highest - lowest) / step) + 1;
+
+    float best = -1.0f, bestScore = -2.0f, good = -1.0f;
+    float prev2 = -2.0f, prev1 = -2.0f, prevCandidate = -1.0f;
+    for (int i = 0; i <= count; ++i)
+    {
+        const float candidate = start + dir * (float) i;
+        const float s = i < count ? coarseScore (current, candidate, coarseCorrelationLength) : -2.0f;
+        if (prev1 > prev2 && prev1 >= s && prev2 > -2.0f)
         {
-            const float score = correlationScore (referenceEnd, writePos - lag, 1);
-            if (score > bestScore) { bestScore = score; best = lag; }
+            if (prev1 > bestScore) { bestScore = prev1; best = prevCandidate; }
+            if (prev1 >= kThreshold) { good = prevCandidate; break; }
         }
-        return std::clamp ((float) best + fraction, lowest, highest);
+        prev2 = prev1;
+        prev1 = s;
+        prevCandidate = candidate;
     }
 
-    // Coarse pass (every 2nd lag, every 2nd sample) then refine +/-1 at full resolution.
-    for (int lag = lo; lag <= hi; lag += 2)
-    {
-        const float score = correlationScore (referenceEnd, writePos - lag, 2);
-        if (score > bestScore) { bestScore = score; best = lag; }
-    }
+    const float pick = good >= 0.0f ? good : (force ? best : -1.0f);
+    if (pick < 0.0f)
+        return force ? (lowestDelayFirst ? lowest : highest) : -1.0f;
 
-    const int coarseBest = best;
-    bestScore = -1.0e30f;
-    for (int lag = std::max (lo, coarseBest - 1); lag <= std::min (hi, coarseBest + 1); ++lag)
+    // Refine at full rate around the coarse pick.
+    float refined = pick, refinedScore = -2.0f;
+    const float lo = std::max (lowest, pick - step * kFineRadius), hi = std::min (highest, pick + step * kFineRadius);
+    for (float candidate = std::ceil (lo); candidate <= hi; candidate += 1.0f)
     {
-        const float score = correlationScore (referenceEnd, writePos - lag, 1);
-        if (score > bestScore) { bestScore = score; best = lag; }
+        const float s = fineScore (current, candidate, correlationLength);
+        if (s > refinedScore) { refinedScore = s; refined = candidate; }
     }
 
     // Keep the outgoing head's sub-sample phase so the relative alignment is exact.
-    return std::clamp ((float) best + fraction, lowest, highest);
+    return std::clamp (refined + (current - std::round (current)), lowest, highest);
 }
 
-void WsolaPitchShifter::startSplice (float rate) noexcept
+void WsolaPitchShifter::startFade (float newDelay, float jump) noexcept
 {
-    if (instrument == Instrument::Bass)
-        estimatePeriod();
-    else
-        trackedPeriod = 0.0f;
-    updateGeometry();
-
-    const float current = delays[activeHead];
-    const float maxSafe = (float) (kBufferSize - correlationLength - 16);
-
-    float target;
-    if (rate < -kUnityEpsilon)      target = current + (float) grainLength;  // pitch up: jump back in time
-    else if (rate > kUnityEpsilon)  target = current - (float) grainLength;  // pitch down: jump forward
-    else                            target = (float) (kMinDelay + searchRadius); // unity: drain latency
-
-    // The new head must survive the whole crossfade without hitting kMinDelay.
-    const float minAllowed = (float) kMinDelay + std::max (0.0f, -rate) * (float) fadeLength + 1.0f;
-    const float lowest  = std::max (target - (float) searchRadius, minAllowed);
-    const float highest = std::max (lowest, std::min (target + (float) searchRadius, maxSafe));
-
-    delays[1 - activeHead] = findBestDelay (current, lowest, highest);
-    fading  = true;
+    delays[1 - activeHead] = newDelay;
+    fadeLength = (int) std::clamp (kFadeFraction * std::abs (jump), fadeMin, fadeMax);
+    fading = true;
     fadePos = 0;
+}
+
+void WsolaPitchShifter::trySplice (float rate) noexcept
+{
+    const float d = delays[activeHead];
+    const float floorDelay = (float) kMinDelay + 1.0f;
+
+    if (rate > -kUnityEpsilon)
+    {
+        // Pitch down (or unity, draining latency): jump forward to a smaller delay as soon as it fits.
+        const float highest = d - minJump;
+        if (highest < floorDelay)
+            return;
+        const bool force = rate > kUnityEpsilon && d >= (float) kMinDelay + maxJump;
+        if (const float next = findSplice (d, floorDelay, highest, true, force); next >= 0.0f)
+            startFade (next, d - next);
+        return;
+    }
+
+    // Pitch up: the delay shrinks; close to the minimum, jump back by the shortest clean lag.
+    const float needed = -rate * fadeMax + 2.0f;   // the new head must survive the crossfade
+    if (d + rate * (float) kCheckInterval > (float) kMinDelay + needed)
+        return;
+    const float maxSafe = (float) (kBufferSize - correlationLength - 16);
+    const float lowest  = std::max (d + minJump, (float) kMinDelay + needed);
+    const float highest = std::min (d + maxJump, maxSafe);
+    if (const float next = findSplice (d, lowest, highest, true, true); next >= 0.0f)
+        startFade (next, next - d);
 }
 
 void WsolaPitchShifter::process (const float* inLeft, const float* inRight,
@@ -346,13 +267,13 @@ void WsolaPitchShifter::process (const float* inLeft, const float* inRight,
         const float l = inLeft[i], r = inRight[i];
         bufferLeft[(size_t) writePos]  = l;
         bufferRight[(size_t) writePos] = r;
-        analysis[(size_t) writePos]    = 0.5f * (l + r);
+        const float mono = 0.5f * (l + r);
+        analysis[(size_t) writePos] = mono;
 
         {
-            const float x = analysis[(size_t) writePos];
-            const float y = lpB0 * x + lpZ1;
-            lpZ1 = lpB1 * x - lpA1 * y + lpZ2;
-            lpZ2 = lpB2 * x - lpA2 * y;
+            const float y = lpB0 * mono + lpZ1;
+            lpZ1 = lpB1 * mono - lpA1 * y + lpZ2;
+            lpZ2 = lpB2 * mono - lpA2 * y;
             if (++decimationPhase >= decimation)
             {
                 decimationPhase = 0;
@@ -363,25 +284,10 @@ void WsolaPitchShifter::process (const float* inLeft, const float* inRight,
 
         const float rate = 1.0f - ratio;   // delay change per sample
 
-        if (! fading)
+        if (! fading && ++sinceCheck >= kCheckInterval)
         {
-            const float d = delays[activeHead];
-            const float projected = d + rate * (float) fadeLength;
-
-            if (rate < -kUnityEpsilon)
-            {
-                if (projected <= (float) kMinDelay)
-                    startSplice (rate);
-            }
-            else if (rate > kUnityEpsilon)
-            {
-                if (projected >= (float) (kMinDelay + grainLength + searchRadius))
-                    startSplice (rate);
-            }
-            else if (d > (float) (kMinDelay + 2 * searchRadius + 1))
-            {
-                startSplice (rate);
-            }
+            sinceCheck = 0;
+            trySplice (rate);
         }
 
         const int a = activeHead;
