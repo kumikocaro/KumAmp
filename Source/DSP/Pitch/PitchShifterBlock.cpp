@@ -14,6 +14,7 @@ namespace
         { "mix",       "Mezcla",       0.0f, 100.0f, 100.0f, "%",  false },
         { "grain",     "Grano",        5.0f,  40.0f,  15.0f, "ms", false },
         { "glide",     "Glide",        0.0f, 1000.0f, 30.0f, "ms", false },
+        { "instrument", "Instrumento",  0.0f,    1.0f,  0.0f, "Guitarra|Bajo", true },
     };
     static_assert (std::size (kParams) == PitchShifterBlock::NumParams);
 } // namespace
@@ -44,6 +45,8 @@ void PitchShifterBlock::processBlock (float* left, float* right, int numSamples)
 {
     const float semis = getParam (Semitones) + getParam (Cents) * 0.01f;
     shifter.setGrainMs (getParam (GrainMs));
+    shifter.setInstrument (getParam (Instrument) >= 0.5f ? WsolaPitchShifter::Instrument::Bass
+                                                         : WsolaPitchShifter::Instrument::Guitar);
     shifter.setRatio (semitonesToRatio (semis), getParam (GlideMs));
 
     // Unity and done gliding -> fade the wet path out to get zero latency.

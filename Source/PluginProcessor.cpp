@@ -14,6 +14,7 @@ namespace
     const juce::String kGateReleaseId   { "gate_release" };
     const juce::String kPitchOnId       { "pitch_on" };
     const juce::String kPitchSemisId    { "pitch_semitones" };
+    const juce::String kPitchInstrId    { "pitch_instrument" };
     const juce::String kMidiOutOnId     { "midi_out_on" };
     const juce::String kMidiChannelId   { "midi_out_channel" };
     const juce::String kMidiThresholdId { "midi_out_threshold" };
@@ -73,6 +74,7 @@ KumAmpAudioProcessor::KumAmpAudioProcessor()
     gateRelease    = parameters.getRawParameterValue (kGateReleaseId);
     pitchOn        = parameters.getRawParameterValue (kPitchOnId);
     pitchSemitones = parameters.getRawParameterValue (kPitchSemisId);
+    pitchInstrument = parameters.getRawParameterValue (kPitchInstrId);
     midiOutOn        = parameters.getRawParameterValue (kMidiOutOnId);
     midiOutChannel   = parameters.getRawParameterValue (kMidiChannelId);
     midiOutThreshold = parameters.getRawParameterValue (kMidiThresholdId);
@@ -122,6 +124,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout KumAmpAudioProcessor::create
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { kPitchSemisId, 1 }, "Pitch Semitones",
                                                        NormalisableRange<float> { -12.0f, 12.0f, 1.0f }, 0.0f,
                                                        AudioParameterFloatAttributes().withLabel ("st")));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { kPitchInstrId, 1 }, "Pitch Instrument",
+                                                        StringArray { "Guitarra", "Bajo" }, 0));
 
     // MIDI
     StringArray channels;
@@ -316,6 +320,7 @@ void KumAmpAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     globalPitch.setBypassed (pitchOn->load (std::memory_order_relaxed) < 0.5f);
     globalPitch.setParam (kumamp::PitchShifterBlock::Semitones, pitchSemitones->load (std::memory_order_relaxed));
+    globalPitch.setParam (kumamp::PitchShifterBlock::Instrument, pitchInstrument->load (std::memory_order_relaxed));
     processChunked (globalPitch, left, right, numSamples, maxBlock);
 
     if (auto* playHead = getPlayHead())

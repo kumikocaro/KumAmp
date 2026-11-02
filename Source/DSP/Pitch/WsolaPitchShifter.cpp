@@ -75,6 +75,11 @@ void WsolaPitchShifter::setGrainMs (float milliseconds) noexcept
     requestedGrainMs = std::clamp (milliseconds, 5.0f, 40.0f);
 }
 
+void WsolaPitchShifter::setInstrument (Instrument newInstrument) noexcept
+{
+    instrument = newInstrument;
+}
+
 void WsolaPitchShifter::setRatio (float newTargetRatio, float glideMilliseconds) noexcept
 {
     targetRatio = std::clamp (newTargetRatio, 0.5f, 2.0f);
@@ -305,7 +310,10 @@ float WsolaPitchShifter::findBestDelay (float outgoingDelay, float lowest, float
 
 void WsolaPitchShifter::startSplice (float rate) noexcept
 {
-    estimatePeriod();
+    if (instrument == Instrument::Bass)
+        estimatePeriod();
+    else
+        trackedPeriod = 0.0f;
     updateGeometry();
 
     const float current = delays[activeHead];

@@ -27,13 +27,15 @@ namespace kumamp
     samples (about 0..20 ms with the default 15 ms grain at 48 kHz). The
     ratio can be glided continuously (whammy-style) without artefacts.
 
-    Bass: a splice can only land in phase if the correlation window spans a
-    full period and the search covers half of one. A low E on bass (41 Hz) has
-    a 24 ms period, longer than the guitar-sized geometry above. At every
-    splice the dominant period is estimated (NSDF on a decimated copy of the
-    input); when it is long, grain / search / correlation grow to fit it and
-    the search runs coarse-to-fine on that decimated copy so the cost stays
-    bounded. Guitar material keeps the short, low-latency geometry.
+    Bass mode: a splice can only land in phase if the correlation window spans
+    a full period and the search covers half of one. A low E on bass (41 Hz)
+    has a 24 ms period, longer than the guitar-sized geometry above. In bass
+    mode the dominant period is estimated at every splice (NSDF on a decimated
+    copy of the input); when it is long, grain / search / correlation grow to
+    fit it and the search runs coarse-to-fine on that decimated copy so the
+    cost stays bounded. Guitar mode never tracks: a guitar chord repeats at the
+    common period of its notes (41 Hz for an open E) and would be mistaken for
+    a bass note, adding latency for nothing.
 
     All memory is allocated in prepare(); process() is RT-safe. Stereo channels
     share the same splice decisions (taken on the mono sum) to keep the image.
@@ -44,11 +46,16 @@ public:
     static constexpr int kBufferSize = 1 << 15;
     static constexpr int kMinDelay   = 4;     // Hermite interpolation needs 2 samples of look-ahead
 
+    enum class Instrument { Guitar, Bass };
+
     void prepare (double sampleRate);
     void reset() noexcept;
 
     /** Takes effect at the next splice. Clamped to 5..40 ms. */
     void setGrainMs (float milliseconds) noexcept;
+
+    /** Guitar (default, lowest latency) or bass (period-tracked geometry). Takes effect at the next splice. */
+    void setInstrument (Instrument newInstrument) noexcept;
 
     /** Pitch ratio target (0.5 .. 2.0) and one-pole glide time. */
     void setRatio (float targetRatio, float glideMilliseconds) noexcept;
@@ -84,6 +91,7 @@ private:
     int coarseWrite = 0, decimation = 8, decimationPhase = 0;
     float lpB0 = 0, lpB1 = 0, lpB2 = 0, lpA1 = 0, lpA2 = 0, lpZ1 = 0, lpZ2 = 0;
     float trackedPeriod = 0.0f;
+    Instrument instrument = Instrument::Guitar;
 
     float delays[2] { (float) kMinDelay, (float) kMinDelay };
     int activeHead = 0;

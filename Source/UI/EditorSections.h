@@ -64,6 +64,10 @@ private:
     std::unique_ptr<SliderAttachment> inputAttachment, thresholdAttachment, releaseAttachment, pitchAttachment;
     std::unique_ptr<ButtonAttachment> gateAttachment, pitchOnAttachment;
 
+    // Guitarra / Bajo segmented switch for the global pitch.
+    juce::TextButton guitarButton { "GUITARRA" }, bassButton { "BAJO" };
+    std::unique_ptr<juce::ParameterAttachment> instrumentAttachment;
+
     Tuner::Reading reading;
     juce::uint32 lastValidTime = 0;
     Tuner::Reading lastValid;

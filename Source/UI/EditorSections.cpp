@@ -163,6 +163,29 @@ Sidebar::Sidebar (juce::AudioProcessorValueTreeState& parameters)
     for (auto* s : { &inputKnob, &gateThreshold, &gateRelease, &pitchKnob })
         s->updateText();
 
+    for (auto* b : { &guitarButton, &bassButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (1);
+        addAndMakeVisible (*b);
+    }
+    guitarButton.setConnectedEdges (juce::Button::ConnectedOnRight);
+    bassButton.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    if (auto* instrument = parameters.getParameter ("pitch_instrument"))
+    {
+        instrumentAttachment = std::make_unique<juce::ParameterAttachment> (*instrument, [this] (float index)
+        {
+            const bool bass = index >= 0.5f;
+            guitarButton.setToggleState (! bass, juce::dontSendNotification);
+            bassButton.setToggleState (bass, juce::dontSendNotification);
+        });
+        guitarButton.onClick = [this] { if (guitarButton.getToggleState()) instrumentAttachment->setValueAsCompleteGesture (0.0f); };
+        bassButton.onClick   = [this] { if (bassButton.getToggleState())   instrumentAttachment->setValueAsCompleteGesture (1.0f); };
+        instrumentAttachment->sendInitialUpdate();
+    }
+    guitarButton.setTooltip ("Pitch para guitarra: la menor latencia");
+    bassButton.setTooltip ("Pitch para bajo: notas graves estables (algo mas de latencia)");
+
     gatePower.setTooltip ("Noise gate de entrada");
     pitchPower.setTooltip ("Transposicion global (polifonica)");
     setTooltip ("Clic en el afinador para abrirlo en grande");
@@ -264,12 +287,11 @@ void Sidebar::paint (juce::Graphics& g)
         g.drawText (s->getTextFromValue (s->getValue()), pill, juce::Justification::centred);
     }
 
-    // Pitch range captions + POLY chip.
+    // Pitch range captions.
     const auto pk = pitchKnob.getBounds();
     g.setColour (theme::textDim);
     g.drawText ("-12", juce::Rectangle<int> (pk.getX() - 34, pk.getBottom() - 40, 30, 16), juce::Justification::centredRight);
     g.drawText ("+12", juce::Rectangle<int> (pk.getRight() + 4, pk.getBottom() - 40, 30, 16), juce::Justification::centredLeft);
-    theme::drawChip (g, juce::Rectangle<float> ((float) pitchCard.getRight() - 72.0f, (float) pk.getBottom() - 46.0f, 56.0f, 26.0f), "POLY", theme::accentLight);
 }
 
 void Sidebar::resized()
@@ -301,6 +323,12 @@ void Sidebar::resized()
         auto a = pitchCard.reduced (14, 10);
         auto top = a.removeFromTop (28);
         pitchPower.setBounds (top.removeFromRight (30));
+        // Guitarra / Bajo switch shares the title row, left of the power button.
+        top.removeFromRight (10);
+        const int switchWidth = std::min (172, top.getWidth() - 70);
+        auto switchRow = top.removeFromRight (switchWidth).withSizeKeepingCentre (switchWidth, 26);
+        guitarButton.setBounds (switchRow.removeFromLeft (switchRow.getWidth() * 11 / 20));
+        bassButton.setBounds (switchRow);
         pitchKnob.setBounds (a.withSizeKeepingCentre (std::min (a.getWidth() - 110, 120), a.getHeight()).translated (-20, 0));
     }
 }

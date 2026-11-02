@@ -356,6 +356,7 @@ void testPitchShifterBass (double f0, float semitones)
     std::printf ("pitch shifter bass %.2f Hz %+.0f st\n", f0, semitones);
     WsolaPitchShifter ps;
     ps.prepare (kRate);
+    ps.setInstrument (WsolaPitchShifter::Instrument::Bass);
     ps.setRatio (std::exp2 (semitones / 12.0f), 0.0f);
 
     const size_t n = (size_t) kRate * 3;
@@ -400,6 +401,38 @@ void testPitchShifterBass (double f0, float semitones)
     CHECK (worstCents < 2.0);
     CHECK (minRms > 0.95 * maxRms);
     CHECK (ps.getCurrentDelaySamples() < kRate * 0.060);
+}
+
+// A guitar chord repeats at the common period of its notes (41 Hz for an open E):
+// guitar mode (the default) must keep the short geometry and latency regardless.
+void testPitchShifterGuitarChord()
+{
+    std::puts ("pitch shifter guitar mode: chord keeps guitar geometry");
+    WsolaPitchShifter ps;
+    ps.prepare (kRate);
+    ps.setRatio (std::exp2 (-5.0f / 12.0f), 0.0f);
+
+    const double chord[] = { 82.41, 123.47, 164.81, 207.65, 246.94, 329.63 };
+    const size_t n = (size_t) kRate * 2;
+    std::vector<float> l (n, 0.0f), r;
+    for (double f0 : chord)
+        for (int k = 1; k <= 8; ++k)
+            for (size_t i = 0; i < n; ++i)
+                l[i] += (float) (0.1 / k * std::sin (2.0 * 3.141592653589793 * f0 * k * (double) i / kRate + 0.3 * k));
+    r = l;
+
+    int bassModeBlocks = 0;
+    float maxDelay = 0.0f;
+    for (size_t off = 0; off < n; off += kBlock)
+    {
+        const int len = (int) std::min<size_t> (kBlock, n - off);
+        ps.process (l.data() + off, r.data() + off, l.data() + off, r.data() + off, len);
+        bassModeBlocks += ps.getTrackedPeriod() > 0.0f;
+        maxDelay = std::max (maxDelay, ps.getCurrentDelaySamples());
+    }
+    std::printf ("  bass-mode blocks %d  max delay %.1f ms\n", bassModeBlocks, maxDelay / kRate * 1000.0);
+    CHECK (bassModeBlocks == 0);
+    CHECK (maxDelay < kRate * 0.022);
 }
 
 void testRateBridge (double hostRate)
@@ -542,6 +575,7 @@ void testAllBlocksStress()
 
         BlockRig rig (type);
         if (rig.block == nullptr) continue;
+        rng.seed (7u + (unsigned) t);   // per block: adding a param elsewhere doesn't reshuffle this one
 
         // Test signal: guitar-ish sine, noise bursts and full-scale impulses.
         std::vector<float> l ((size_t) kRate / 2), r;
@@ -930,6 +964,7 @@ int main()
     for (double f0 : { 30.87, 41.20, 46.25 })
         for (float st : { -2.0f, -5.0f })
             testPitchShifterBass (f0, st);
+    testPitchShifterGuitarChord();
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
     return failures == 0 ? 0 : 1;

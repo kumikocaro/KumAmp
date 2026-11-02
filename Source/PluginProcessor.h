@@ -96,6 +96,7 @@ private:
     std::atomic<float>* gateRelease = nullptr;
     std::atomic<float>* pitchOn = nullptr;
     std::atomic<float>* pitchSemitones = nullptr;
+    std::atomic<float>* pitchInstrument = nullptr;
     std::atomic<float>* midiOutOn = nullptr;
     std::atomic<float>* midiOutChannel = nullptr;
     std::atomic<float>* midiOutThreshold = nullptr;
