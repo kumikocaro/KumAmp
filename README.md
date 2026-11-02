@@ -259,3 +259,11 @@ Sin modelo ni IR cargados, los bloques Amp y Cab dejan pasar la señal sin cambi
 3. Sincronización de tempo del host para delays y modulaciones, más tap tempo.
 4. Medidores en el panel: reducción de ganancia del compresor y estado del gate.
 5. Editor: mover bloques arrastrando, deshacer/rehacer y cambiar el tipo de un bloque.
+
+## Licencia
+
+KumAmp es software libre bajo la **GNU General Public License v3** (ver [`LICENSE`](LICENSE)).
+El standalone de Windows incluye soporte **ASIO** mediante el SDK de Steinberg, usado bajo la opción
+GPLv3 de su licencia dual; CMake lo descarga solo en Windows (`-DKUMAMP_ASIO=OFF` lo desactiva).
+Componentes de terceros y sus licencias: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+

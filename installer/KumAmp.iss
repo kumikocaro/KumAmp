@@ -4,7 +4,7 @@
 ; (build_windows.bat y el workflow de GitHub Actions lo hacen automaticamente)
 
 #ifndef AppVersion
-  #define AppVersion "0.1.2"
+  #define AppVersion "0.1.3"
 #endif
 #ifndef BuildDir
   #define BuildDir "..\build-win\KumAmp_artefacts\Release"
@@ -31,6 +31,7 @@ WizardStyle=modern
 UninstallDisplayName=KumAmp {#AppVersion}
 UninstallDisplayIcon={app}\KumAmp.exe
 MinVersion=10.0
+LicenseFile=..\LICENSE
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -53,6 +54,8 @@ Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; Compo
 Source: "{#BuildDir}\VST3\KumAmp.vst3\*"; DestDir: "{commoncf64}\VST3\KumAmp.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
 Source: "{#BuildDir}\Standalone\KumAmp.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LEEME.md"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\KumAmp";                 Filename: "{app}\KumAmp.exe"; Components: standalone

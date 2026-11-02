@@ -28,6 +28,15 @@ jobs:
       - name: Test
         run: ctest --test-dir build-win -C Release --output-on-failure
 
+      - name: Check ASIO support
+        # The ASIO device type (and this driver blacklist string) is only compiled with JUCE_ASIO=1.
+        shell: pwsh
+        run: |
+          $exe = "build-win\KumAmp_artefacts\Release\Standalone\KumAmp.exe"
+          $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+          if (-not $text.Contains("ASIO DirectX Full Duplex")) { Write-Error "KumAmp.exe was built without ASIO"; exit 1 }
+          Write-Host "ASIO support present in KumAmp.exe"
+
       - name: Installer
         shell: pwsh
         run: |

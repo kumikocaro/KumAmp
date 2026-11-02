@@ -18,7 +18,7 @@ endif()
 # Windows: runtime de MSVC estatico -> el usuario no necesita instalar el VC++ Redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(KumAmp VERSION 0.1.2 LANGUAGES C CXX)
+project(KumAmp VERSION 0.1.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -116,6 +116,22 @@ FetchContent_Declare(NeuralAmpModelerCore
     SOURCE_SUBDIR  __kumamp_no_cmake__)
 FetchContent_MakeAvailable(NeuralAmpModelerCore)
 
+# ---------------------------------------------------------------------------
+# Steinberg ASIO SDK (GPLv3 option of its dual license): ASIO drivers in the
+# Windows standalone. Only iasiodrv.h and the headers it pulls in are used.
+# ---------------------------------------------------------------------------
+option(KUMAMP_ASIO "Soporte ASIO en el standalone de Windows (SDK de Steinberg, GPLv3)" ${WIN32})
+if(KUMAMP_ASIO)
+    FetchContent_Declare(AsioSdk
+        URL      https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip
+        URL_HASH SHA256=d5ebf0c20dd2c5f43771fd0c1418f4b361bf52434ee670097cfa6b3a335e2eca
+        SOURCE_SUBDIR __kumamp_no_cmake__)
+    FetchContent_MakeAvailable(AsioSdk)
+    if(NOT EXISTS ${asiosdk_SOURCE_DIR}/common/iasiodrv.h)
+        message(FATAL_ERROR "ASIO SDK sin common/iasiodrv.h en ${asiosdk_SOURCE_DIR}")
+    endif()
+endif()
+
 set(NAM_DIR ${neuralampmodelercore_SOURCE_DIR})
 file(GLOB NAM_SOURCES ${NAM_DIR}/NAM/*.cpp ${NAM_DIR}/NAM/*/*.cpp)
 add_library(KumAmpNam OBJECT ${NAM_SOURCES})
@@ -191,6 +207,11 @@ target_compile_definitions(KumAmp PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_REPORT_APP_USAGE=0)
+
+if(KUMAMP_ASIO)
+    target_compile_definitions(KumAmp PUBLIC JUCE_ASIO=1)
+    target_include_directories(KumAmp SYSTEM PRIVATE ${asiosdk_SOURCE_DIR}/common)
+endif()
 
 target_link_libraries(KumAmp
     PRIVATE
