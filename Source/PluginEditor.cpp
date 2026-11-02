@@ -22,12 +22,14 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
       settings (p.getParameters())
 {
     setLookAndFeel (&lookAndFeel);
+    addAndMakeVisible (content);
+    setWantsKeyboardFocus (true);
 
     header.onTabChanged = [this] (int tab) { showTab (tab); };
-    addAndMakeVisible (header);
+    content.addAndMakeVisible (header);
 
     sidebar.onTunerClicked = [this] { showTuner (! tunerView.isVisible()); };
-    addAndMakeVisible (sidebar);
+    content.addAndMakeVisible (sidebar);
 
     sceneBar.onSceneSelected = [this] (int scene) { kumProcessor.selectScene (scene); };
     sceneBar.onNameEdited    = [this] (int scene, const juce::String& name) { engine.setSceneName (scene, name); };
@@ -39,11 +41,11 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     sceneBar.onUndo = [this] { engine.undo(); };
     sceneBar.onRedo = [this] { engine.redo(); };
     sceneBar.onMenu = [this] (juce::Component& source) { showMainMenu (source); };
-    addAndMakeVisible (sceneBar);
+    content.addAndMakeVisible (sceneBar);
 
     grid.onNodeSelected = [this] (kumamp::StoreId id) { panel.setStore (engine.getStore (id)); };
     grid.onError = [this] (const juce::String& message) { showToast ("Error: " + message); };
-    addAndMakeVisible (grid);
+    content.addAndMakeVisible (grid);
 
     palette.onGroupClicked = [this] (int group, juce::Component& source)
     {
@@ -57,36 +59,37 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     {
         grid.showBlockMenu (-1, grid.defaultInsertTarget(), source.getScreenBounds(), true);
     };
-    addAndMakeVisible (palette);
+    content.addAndMakeVisible (palette);
 
     panel.onRemove = [this] { grid.removeSelected(); };
     panel.onExpandEq = [this] (std::shared_ptr<kumamp::ParamStore> eqStore) { showEqOverlay (std::move (eqStore)); };
-    addAndMakeVisible (panel);
+    content.addAndMakeVisible (panel);
 
     tunerView.readingSource      = [this] { return kumProcessor.getTuner().getLatest(); };
     tunerView.onModeChanged      = [this] (int mode) { setParameter ("tuner_mode", (float) mode); };
     tunerView.onMuteChanged      = [this] (bool mute) { setParameter ("tuner_mute", mute ? 1.0f : 0.0f); };
     tunerView.onReferenceChanged = [this] (float hz) { setParameter ("tuner_reference", hz); };
     tunerView.onClose            = [this] { showTuner (false); };
-    addChildComponent (tunerView);
-    addChildComponent (placeholder);
+    content.addChildComponent (tunerView);
+    content.addChildComponent (placeholder);
     settings.noteSource     = [this] { return kumProcessor.getMidiOutNote(); };
     settings.velocitySource = [this] { return kumProcessor.getMidiOutVelocity(); };
     settings.bendSource     = [this] { return kumProcessor.getMidiOutBend(); };
-    addChildComponent (settings);
+    content.addChildComponent (settings);
 
     toast.setJustificationType (juce::Justification::centred);
     toast.setColour (juce::Label::backgroundColourId, kumamp::theme::panelRaised);
     toast.setColour (juce::Label::outlineColourId, kumamp::theme::border);
     toast.setFont (juce::FontOptions (15.0f));
-    addChildComponent (toast);
+    content.addChildComponent (toast);
 
     // The compact tuner in the sidebar is always live while the editor is open.
     kumProcessor.getTuner().setListening (true);
 
     setResizable (true, true);
-    setResizeLimits (1240, 760, 2600, 1600);
-    setSize (1500, 880);
+    uiScale = fittingScale (loadSavedScale());
+    applyScaleLimits();
+    setSize (juce::roundToInt (kDefaultWidth * uiScale), juce::roundToInt (kDefaultHeight * uiScale));
     startTimerHz (30);
 }
 
@@ -119,7 +122,7 @@ void KumAmpAudioProcessorEditor::showEqOverlay (std::shared_ptr<kumamp::ParamSto
                                          { if (safe != nullptr) safe->eqOverlay.reset(); });
     };
     eqOverlay->setBounds (centreColumn);
-    addAndMakeVisible (*eqOverlay);
+    content.addAndMakeVisible (*eqOverlay);
     eqOverlay->toFront (false);
 }
 
@@ -159,6 +162,13 @@ void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
     menu.addSeparator();
     menu.addItem (4, "Reset DSP (limpiar colas y estados)");
     menu.addItem (5, "Cargar preset por defecto");
+    menu.addSeparator();
+    juce::PopupMenu sizes;
+    for (int percent : { 60, 70, 80, 90, 100, 110, 125, 150 })
+        sizes.addItem (100 + percent, juce::String (percent) + " %", true, juce::roundToInt (uiScale * 100.0f) == percent);
+    sizes.addSeparator();
+    sizes.addItem (99, "Ajustar a la pantalla");
+    menu.addSubMenu (juce::CharPointer_UTF8 ("Tama\xc3\xb1o de la interfaz"), sizes);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&source),
                         [safe = juce::Component::SafePointer<KumAmpAudioProcessorEditor> (this)] (int result)
                         {
@@ -170,7 +180,11 @@ void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
                                 case 3: safe->engine.redo(); break;
                                 case 4: safe->engine.pushCommand ({ kumamp::EngineCommand::Type::ResetAllBlocks, 0 }); break;
                                 case 5: safe->engine.loadDefaultPreset(); safe->grid.selectNode (kumamp::kInvalidNode); break;
-                                default: break;
+                                case 99: safe->setUiScale (fittingScale (1.5f)); break;
+                                default:
+                                    if (result > 100)
+                                        safe->setUiScale ((float) (result - 100) / 100.0f);
+                                    break;
                             }
                         });
 }
@@ -247,12 +261,99 @@ void KumAmpAudioProcessorEditor::timerCallback()
 void KumAmpAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (kumamp::theme::background);
+}
+
+void KumAmpAudioProcessorEditor::paintContent (juce::Graphics& g)
+{
+    g.fillAll (kumamp::theme::background);
     kumamp::theme::drawCard (g, centreCard.toFloat());
 }
 
 void KumAmpAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds();
+    // Logical size = window size / scale; the transform draws it back at window size.
+    content.setTransform ({});
+    content.setBounds (0, 0, juce::roundToInt ((float) getWidth() / uiScale), juce::roundToInt ((float) getHeight() / uiScale));
+    content.setTransform (juce::AffineTransform::scale (uiScale));
+}
+
+//==============================================================================
+namespace
+{
+    constexpr float kMinScale = 0.6f, kMaxScale = 1.5f;
+
+    std::unique_ptr<juce::PropertiesFile> openUserSettings()
+    {
+        juce::PropertiesFile::Options options;
+        options.applicationName     = "KumAmp";
+        options.filenameSuffix      = ".settings";
+        options.folderName          = "KumAmp";
+        options.osxLibrarySubFolder = "Application Support";
+        return std::make_unique<juce::PropertiesFile> (options);
+    }
+} // namespace
+
+float KumAmpAudioProcessorEditor::loadSavedScale()
+{
+    return juce::jlimit (kMinScale, kMaxScale, (float) openUserSettings()->getDoubleValue ("uiScale", 1.0));
+}
+
+void KumAmpAudioProcessorEditor::saveScale (float scale)
+{
+    auto settings = openUserSettings();
+    settings->setValue ("uiScale", (double) scale);
+    settings->saveIfNeeded();
+}
+
+float KumAmpAudioProcessorEditor::fittingScale (float wanted)
+{
+    // Leave room for the host's window frame and the OS taskbar / menu bar.
+    const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    if (display == nullptr)
+        return juce::jlimit (kMinScale, kMaxScale, wanted);
+    const auto area = display->userArea;
+    const float fit = std::min (((float) area.getWidth() - 40.0f) / (float) kDefaultWidth,
+                                ((float) area.getHeight() - 110.0f) / (float) kDefaultHeight);
+    const float steps = std::floor (std::min (wanted, fit) * 20.0f) / 20.0f;   // 5 % steps
+    return juce::jlimit (kMinScale, kMaxScale, steps);
+}
+
+void KumAmpAudioProcessorEditor::applyScaleLimits()
+{
+    setResizeLimits (juce::roundToInt (kMinWidth * uiScale), juce::roundToInt (kMinHeight * uiScale),
+                     juce::roundToInt (kMaxWidth * uiScale), juce::roundToInt (kMaxHeight * uiScale));
+}
+
+void KumAmpAudioProcessorEditor::setUiScale (float newScale, bool remember)
+{
+    newScale = juce::jlimit (kMinScale, kMaxScale, newScale);
+    // Keep the current logical size (the layout the user had), just drawn bigger or smaller.
+    const auto logical = content.getBounds();
+    uiScale = newScale;
+    applyScaleLimits();
+    setSize (juce::roundToInt ((float) logical.getWidth() * uiScale), juce::roundToInt ((float) logical.getHeight() * uiScale));
+    resized();
+    if (! remember)
+        return;
+    saveScale (uiScale);
+    showToast ("Interfaz al " + juce::String (juce::roundToInt (uiScale * 100.0f)) + " %");
+}
+
+bool KumAmpAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    // Ctrl (Cmd on Mac) + / - / 0, like a browser.
+    if (! key.getModifiers().isCommandDown())
+        return false;
+    const auto c = key.getTextCharacter();
+    if (c == '+' || c == '=') { setUiScale (std::round (uiScale * 10.0f + 1.0f) / 10.0f); return true; }
+    if (c == '-')             { setUiScale (std::round (uiScale * 10.0f - 1.0f) / 10.0f); return true; }
+    if (c == '0')             { setUiScale (1.0f); return true; }
+    return false;
+}
+
+void KumAmpAudioProcessorEditor::layoutContent()
+{
+    auto area = content.getLocalBounds();
     header.setBounds (area.removeFromTop (84));
     area.reduce (16, 16);
 

@@ -16,6 +16,13 @@
       sidebar (tuner, input, gate, pitch) | scene bar + grid + block palette
       block panel (selected block + output meter)
     The big tuner and the not-yet-available tabs overlay the centre column.
+
+    UI scale: every child lives in `content`, laid out at the logical size
+    (editor size / scale) and drawn through an AffineTransform, so the whole
+    interface can shrink for small screens (Windows laptops at 125-150 %
+    display scaling) without a separate layout. The scale is chosen from the
+    main menu or Ctrl/Cmd +/-/0, is remembered per user, and is reduced
+    automatically on open when the window would not fit the screen.
 */
 class KumAmpAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
@@ -27,8 +34,25 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+
+    float getUiScale() const noexcept { return uiScale; }
+    /** remember = store as this user's preference (not for tests / automatic fitting). */
+    void setUiScale (float newScale, bool remember = true);
+
+    static constexpr int kDefaultWidth = 1500, kDefaultHeight = 880;   // logical size at 100 %
+    static constexpr int kMinWidth = 1240, kMinHeight = 760;
+    static constexpr int kMaxWidth = 2600, kMaxHeight = 1600;
 
 private:
+    struct Content final : public juce::Component
+    {
+        explicit Content (KumAmpAudioProcessorEditor& e) : owner (e) {}
+        void paint (juce::Graphics& g) override { owner.paintContent (g); }
+        void resized() override                 { owner.layoutContent(); }
+        KumAmpAudioProcessorEditor& owner;
+    };
+
     struct Placeholder final : public juce::Component
     {
         juce::String title;
@@ -36,6 +60,12 @@ private:
     };
 
     void timerCallback() override;
+    void paintContent (juce::Graphics&);
+    void layoutContent();
+    void applyScaleLimits();
+    static float loadSavedScale();
+    static void saveScale (float scale);
+    static float fittingScale (float wanted);
     void showTuner (bool shouldShow);
     void showEqOverlay (std::shared_ptr<kumamp::ParamStore> eqStore);
     void showTab (int tab);
@@ -47,6 +77,9 @@ private:
     kumamp::KumAmpLookAndFeel lookAndFeel;   // must outlive every child
     KumAmpAudioProcessor& kumProcessor;
     kumamp::GridEngine& engine;
+
+    Content content { *this };
+    float uiScale = 1.0f;
 
     kumamp::HeaderBar header;
     kumamp::Sidebar sidebar;

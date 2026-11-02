@@ -1,6 +1,7 @@
 // Instantiates the real processor + editor, feeds audio (meters, tuner, NAM
 // model), selects the amp block and writes the window to PNG.
 
+#include "DSP/Pitch/PitchShifterBlock.h"
 #include "PluginEditor.h"
 #include "DSP/Time/DelayBlocks.h"
 
@@ -26,7 +27,20 @@ int main()
         }
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* kumEditor = dynamic_cast<KumAmpAudioProcessorEditor*> (editor.get());
+    if (kumEditor != nullptr)
+        kumEditor->setUiScale (1.0f, false);   // deterministic, and don't touch the user's saved size
     editor->setSize (1500, 880);
+
+    // All sections live in the editor's scaled content component.
+    auto sections = [&editor]
+    {
+        juce::Component* content = editor.get();
+        for (auto* child : editor->getChildren())
+            if (child->getNumChildComponents() > content->getNumChildComponents())
+                content = child;
+        return content->getChildren();
+    };
 
     // Run ~1.5 s of a low E (slightly flat) so meters, tuner and the model are live.
     juce::AudioBuffer<float> buffer (2, 64);
@@ -51,7 +65,7 @@ int main()
     }
 
     // Select the amp so the block panel shows the NAM controls.
-    for (auto* child : editor->getChildren())
+    for (auto* child : sections())
         if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
             gridView->selectNode (ampNode);
     juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
@@ -81,7 +95,7 @@ int main()
             store->setParam (EQ::bandParam (7, EQ::BandOn), 1.0f);
             store->setParam (EQ::bandParam (7, EQ::BandSlope), 2.0f);
         }
-    for (auto* child : editor->getChildren())
+    for (auto* child : sections())
         if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
             gridView->selectNode (eqNode);
 
@@ -116,13 +130,13 @@ int main()
     };
     bool allOk = ok && save ("editor_eq.png");
 
-    for (auto* child : editor->getChildren())
+    for (auto* child : sections())
         if (auto* panelView = dynamic_cast<kumamp::BlockPanel*> (child))
             if (panelView->onExpandEq)
                 panelView->onExpandEq (engine.getStore (engine.getModel().findNode (eqNode)->store));
     pump (300);
     // Click band 3's node in the large EQ so the edit strip shows.
-    for (auto* child : editor->getChildren())
+    for (auto* child : sections())
         if (auto* eqView = dynamic_cast<kumamp::EqView*> (child))
             if (eqView->getWidth() > 900)
             {
@@ -144,7 +158,7 @@ int main()
         {
             store->setParam (kumamp::DigitalDelayBlock::Sync, 1.0f);
             store->setParam (kumamp::DigitalDelayBlock::Division, 10.0f);   // 1/8.
-            for (auto* child : editor->getChildren())
+            for (auto* child : sections())
             {
                 if (auto* eqView = dynamic_cast<kumamp::EqView*> (child))
                     eqView->setVisible (false);
@@ -154,6 +168,40 @@ int main()
         }
     pump (200);
     allOk = save ("editor_delay_sync.png") && allOk;
+
+    // Pitch: global switch on "Bajo" and a Pitch Shifter block in bass mode before the amp.
+    if (auto* param = processor.getParameters().getParameter ("pitch_on"))
+        param->setValueNotifyingHost (1.0f);
+    if (auto* param = processor.getParameters().getParameter ("pitch_instrument"))
+        param->setValueNotifyingHost (1.0f);
+    if (const auto* amp = engine.getModel().findNode (ampNode))
+    {
+        const auto pitchNode = engine.insertBlock (amp->inputs[0], amp->id, kumamp::BlockType::PitchShifter, false);
+        if (const auto* node = engine.getModel().findNode (pitchNode))
+            if (auto store = engine.getStore (node->store))
+            {
+                store->setParam (kumamp::PitchShifterBlock::Semitones, -5.0f);
+                store->setParam (kumamp::PitchShifterBlock::Instrument, 1.0f);
+            }
+        pump (100);
+        for (auto* child : sections())
+            if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
+                gridView->selectNode (pitchNode);
+    }
+    pump (200);
+    allOk = save ("editor_pitch_bass.png") && allOk;
+
+    // Small screens: the whole interface at 70 %.
+    if (kumEditor != nullptr)
+    {
+        kumEditor->setUiScale (0.7f, false);
+        pump (60);
+        allOk = save ("editor_scale70.png") && allOk;
+        std::printf ("scale 70%%: window %dx%d\n", editor->getWidth(), editor->getHeight());
+        allOk = allOk && editor->getWidth() == 1050 && editor->getHeight() == 616;
+        kumEditor->setUiScale (1.0f, false);
+        pump (60);
+    }
 
     // Settings tab with guitar -> MIDI on: check MIDI notes come out of processBlock.
     if (auto* param = processor.getParameters().getParameter ("midi_out_on"))
@@ -176,7 +224,7 @@ int main()
     }
     std::printf ("MIDI out: %d note-on(s), first note %d (expected 40)\n", noteOns, firstNote);
     allOk = allOk && noteOns >= 1 && firstNote == 40;
-    for (auto* child : editor->getChildren())
+    for (auto* child : sections())
         if (auto* header = dynamic_cast<kumamp::HeaderBar*> (child))
             if (header->onTabChanged) header->onTabChanged (4);
     pump (60);
