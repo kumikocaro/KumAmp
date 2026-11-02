@@ -27,6 +27,14 @@ namespace kumamp
     samples (about 0..20 ms with the default 15 ms grain at 48 kHz). The
     ratio can be glided continuously (whammy-style) without artefacts.
 
+    Bass: a splice can only land in phase if the correlation window spans a
+    full period and the search covers half of one. A low E on bass (41 Hz) has
+    a 24 ms period, longer than the guitar-sized geometry above. At every
+    splice the dominant period is estimated (NSDF on a decimated copy of the
+    input); when it is long, grain / search / correlation grow to fit it and
+    the search runs coarse-to-fine on that decimated copy so the cost stays
+    bounded. Guitar material keeps the short, low-latency geometry.
+
     All memory is allocated in prepare(); process() is RT-safe. Stereo channels
     share the same splice decisions (taken on the mono sum) to keep the image.
 */
@@ -54,15 +62,28 @@ public:
     bool  isGliding() const noexcept;
     float getCurrentDelaySamples() const noexcept { return delays[activeHead]; }
 
+    /** Period (samples) the geometry is currently fitted to; 0 = guitar-sized geometry. */
+    float getTrackedPeriod() const noexcept { return trackedPeriod; }
+
 private:
+    static constexpr int kCoarseSize = 1 << 12;
+
     void updateGeometry() noexcept;
+    void estimatePeriod() noexcept;
     void startSplice (float rate) noexcept;
     float findBestDelay (float outgoingDelay, float lowest, float highest) const noexcept;
     float correlationScore (int referenceEnd, int candidateEnd, int step) const noexcept;
+    float coarseScore (int referenceEnd, int candidateEnd, int length) const noexcept;
     float read (const std::vector<float>& buffer, float delay) const noexcept;
 
     std::vector<float> bufferLeft, bufferRight, analysis;
     int writePos = 0;
+
+    // Decimated, low-passed copy of `analysis` for period tracking and coarse search.
+    std::vector<float> coarse, nsdf, trackWindow;
+    int coarseWrite = 0, decimation = 8, decimationPhase = 0;
+    float lpB0 = 0, lpB1 = 0, lpB2 = 0, lpA1 = 0, lpA2 = 0, lpZ1 = 0, lpZ2 = 0;
+    float trackedPeriod = 0.0f;
 
     float delays[2] { (float) kMinDelay, (float) kMinDelay };
     int activeHead = 0;

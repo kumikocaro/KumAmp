@@ -349,6 +349,59 @@ void testPitchShifter (float semitones)
     CHECK (ps.getCurrentDelaySamples() < kRate * 0.030);   // stays low-latency
 }
 
+// Bass notes have periods (24 ms for a low E) longer than the guitar-sized
+// splice geometry: the shifter must track the period and still splice in phase.
+void testPitchShifterBass (double f0, float semitones)
+{
+    std::printf ("pitch shifter bass %.2f Hz %+.0f st\n", f0, semitones);
+    WsolaPitchShifter ps;
+    ps.prepare (kRate);
+    ps.setRatio (std::exp2 (semitones / 12.0f), 0.0f);
+
+    const size_t n = (size_t) kRate * 3;
+    std::vector<float> l (n), r (n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        double s = 0.0;
+        for (int k = 1; k <= 10; ++k)
+            s += std::sin (2.0 * 3.141592653589793 * f0 * k * (double) i / kRate + 0.7 * k) / k;
+        l[i] = r[i] = (float) (0.25 * s);
+    }
+
+    for (size_t off = 0; off < n; off += kBlock)
+    {
+        const int len = (int) std::min<size_t> (kBlock, n - off);
+        ps.process (l.data() + off, r.data() + off, l.data() + off, r.data() + off, len);
+    }
+
+    const double expected = f0 * std::exp2 (semitones / 12.0);
+    PitchDetector detector;
+    detector.prepare (kRate, 8192, 18.0f, 1500.0f);
+    double worstCents = 0.0;
+    for (size_t s = n / 3; s + 8192 < n; s += 2400)
+    {
+        const auto res = detector.analyse (l.data() + s);
+        worstCents = std::max (worstCents, res.valid ? std::abs (1200.0 * std::log2 (res.frequency / expected)) : 999.0);
+    }
+
+    // Envelope over two output periods: splice dropouts / phase cancellations show up as dips.
+    const size_t w = (size_t) (2.0 * kRate / expected);
+    double minRms = 1e9, maxRms = 0.0;
+    for (size_t s = n / 3; s + w < n; s += 240)
+    {
+        double acc = 0.0;
+        for (size_t i = s; i < s + w; ++i) acc += (double) l[i] * l[i];
+        const double rms = std::sqrt (acc / (double) w);
+        minRms = std::min (minRms, rms);
+        maxRms = std::max (maxRms, rms);
+    }
+    std::printf ("  worst %.2f ct  rms %.3f..%.3f  tracked period %.0f smp\n",
+                 worstCents, minRms, maxRms, ps.getTrackedPeriod());
+    CHECK (worstCents < 2.0);
+    CHECK (minRms > 0.95 * maxRms);
+    CHECK (ps.getCurrentDelaySamples() < kRate * 0.060);
+}
+
 void testRateBridge (double hostRate)
 {
     std::printf ("rate bridge %.0f -> 48000 -> %.0f\n", hostRate, hostRate);
@@ -874,6 +927,9 @@ int main()
     testRateBridge (96000.0);
     for (float st : { 12.0f, 7.0f, 3.0f, -5.0f, -12.0f, 0.5f })
         testPitchShifter (st);
+    for (double f0 : { 30.87, 41.20, 46.25 })
+        for (float st : { -2.0f, -5.0f })
+            testPitchShifterBass (f0, st);
 
     std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
     return failures == 0 ? 0 : 1;
