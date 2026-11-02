@@ -4,7 +4,7 @@
 ; (build_windows.bat y el workflow de GitHub Actions lo hacen automaticamente)
 
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.1.2"
 #endif
 #ifndef BuildDir
   #define BuildDir "..\build-win\KumAmp_artefacts\Release"
