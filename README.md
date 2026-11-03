@@ -140,8 +140,10 @@ El EQ paramétrico tiene 8 bandas: Bell, Low/High Shelf, Low/High Cut (12, 24, 3
 | Doble clic en vacío | Nueva banda |
 | Doble clic en un nodo | Quitar la banda |
 | Clic derecho | Tipo, pendiente y quitar |
+| Alt (Option) + clic sostenido | Escuchar la banda mientras se mantiene (se puede seguir arrastrando) |
 
-- La banda seleccionada abre una tira con tipo, pendiente, Freq, Gain y Q.
+- La banda seleccionada abre una tira con tipo, pendiente, Freq, Gain, Q y **Escuchar**.
+- **Escuchar banda (como en FabFilter):** solo suena la zona sobre la que actúa la banda, a nivel unidad. En Bell, Notch y Band Pass es un pasabanda en su frecuencia y Q; en Low Shelf y Low Cut, lo que está por debajo; en High Shelf y High Cut, lo que está por encima (24 dB/oct). La zona se sombrea en la curva, entra y sale con un fundido de 15 ms y sigue al nodo mientras lo arrastrás. No se guarda en el preset.
 - La curva se calcula con el mismo código (`EqDesign.h`) que procesa el audio. Verificado en los tests: -3,0 dB en la frecuencia de corte y -48 dB una octava por debajo en 48 dB/oct.
 - El analizador usa taps sin bloqueo (`SampleRing`) que solo se activan mientras la vista está visible.
 
@@ -164,7 +166,25 @@ El EQ paramétrico tiene 8 bandas: Bell, Low/High Shelf, Low/High Cut (12, 24, 3
 **Guitar Synth** (bloque de la familia Pitch):
 - Mono: osciladores PolyBLEP (sierra, cuadrada o pulso), sub-octava y glide, siguiendo la nota tocada.
 - Poly: funciona con acordes mediante fuzz cuadrado y sub-octava polifónica (WSOLA).
-- Ambos modos pasan por un filtro resonante con envolvente controlada por la dinámica de la guitarra.
+- Textura: una capa sintética con ataque de guitarra, pensada para mezclar debajo de la guitarra real (funciona con acordes). Cada púa se detecta y dispara una envolvente de "pluck" (Decay) que maneja el nivel y el filtro, como un pluck de sintetizador. La voz es la guitarra cuadrada más una octava arriba (+1 Oct) y el sub, abierta en estéreo con dos delays cortos modulados (Ancho). Para usarla de complemento, la Mezcla va bien entre 25 % y 40 %.
+- Los tres modos pasan por un filtro resonante con envolvente: en Mono y Poly la maneja la dinámica de la guitarra, en Textura el pluck.
+- Instrumento: un banco propio de KumAmp con 16 instrumentos sintetizados que toca la guitarra. Son síntesis pura, sin samples, así que van bajo la licencia del proyecto y no pesan nada.
+  - **Sonidos:** Piano, E. Piano, Órgano Jazz, Órgano Rock, Órgano Iglesia, Cuerdas, Cuerdas Solina, Pad Cálido, Pad Brillante, Coro, Brass, Campanas, Mallets, Pluck, Lead y Bajo Synth.
+  - **Motores:** aditivo (órganos de rueda fónica con click y percusión, órgano de tubos, piano con parciales inarmónicos, dos cuerdas por nota y martillo), FM (piano eléctrico de lengüeta, campanas) y analógico (sierras desafinadas, sub y filtro con envolvente, con formantes para el coro).
+  - **Efectos por sonido:** saturación y Leslie (lento y rápido) en los órganos, ensemble en cuerdas y pads, auto-pan en el piano eléctrico.
+  - **Notas:** en «Acordes», un detector polifónico lee lo que suena en las cuerdas. Usa un banco de filtros por semitono y la saliencia armónica, y quita los armónicos de cada nota encontrada. Las octavas duplicadas de un acorde se escuchan como parte de la nota grave. Tarda unos 40 ms en los agudos y hasta ~80 ms en las cuerdas graves. «Nota simple» usa el afinador interno y responde más rápido; el Lead y el Bajo Synth tocan la nota más aguda o la más grave.
+  - **Re-ataque:** en los sonidos percusivos (piano, E. piano, campanas, mallets, pluck, bajo), cada púa vuelve a atacar las notas.
+  - **Controles:** Tono (más oscuro o más brillante), Cola (decays y releases más cortos o más largos), Octava y Ancho.
+  - **Secuencia:** Arp Sube, Arp Baja, Arp Sube-Baja, Arp Azar, Acordes, Tresillo, Galope u Octavas, sincronizada al tempo del proyecto. El patrón arranca con la primera púa.
+  - **Ajustes de la secuencia:** Ritmo (1/4 a 1/32, con tresillos), Duración de cada nota, Octavas del arpegio (1 a 3) y Swing.
+- El panel muestra solo los controles del modo elegido. En Instrumento, los chips indican el sonido y las notas que está leyendo.
+
+### Noise Gate: Clásico y Avanzado
+
+El gate de entrada (barra lateral) y el bloque Noise Gate tienen dos modos:
+
+- **Clásico:** un detector y una ganancia para toda la señal.
+- **Avanzado (guitarra):** el soplido que deja pasar un gate clásico está en los agudos, y queda abierto mientras suene la fundamental de la nota. En este modo el detector ignora el zumbido (pasaaltos de 100 Hz en la llave) y la señal se divide en "Corte" (2,5 kHz) en dos bandas complementarias, que suman exacto con el gate abierto. Los graves siguen al gate principal. Los agudos además necesitan su propio nivel (medido con un pasaaltos de 24 dB/oct) por encima del umbral + "Agudos", y cierran más rápido. En el test, con una nota que suena y soplido de fondo, el hiss por encima de 5 kHz en la cola baja de -63 a -88 dB, y el cuerpo de la nota no cambia.
 
 ### Escenas
 
@@ -193,11 +213,28 @@ acordes cuando su periodo común entra en la ventana (45 ms por defecto, paráme
 - Normalización a -18 dB usando el campo `loudness` de los metadatos.
 - **Detección de perfil:** el campo `gear_type` de los metadatos decide el tipo. Si contiene `cab` o `full_rig` el perfil es *End-to-End*; con `amp`, `pedal`, `preamp` y similares es *Amp-Only*. El parámetro "Perfil" permite forzarlo (0 Auto, 1 Amp, 2 E2E).
 
+### Overdrive (Tube Screamer)
+
+Modelo del circuito TS808 / TS9. Va antes del amp y arranca apagado.
+
+- **Etapa de recorte:** op-amp no inversor cuya rama de ganancia (4,7k + 47 nF) solo amplifica lo que está por encima de ~720 Hz (de ahí la "joroba" de medios). En la realimentación hay 51k + Drive (500k, curva logarítmica), dos 1N914 y 51 pF. El nodo de realimentación se resuelve muestra a muestra (Euler implícito + Newton sobre la ley de Shockley del diodo) con oversampling 4x. La salida es la entrada más ese voltaje recortado, y por eso el Screamer conserva tanto la nota limpia.
+- **Tono:** el pasabajos pasivo 1k / 220 nF (723 Hz) se mezcla de vuelta hacia plano con la perilla, y después viene el nivel.
+- **Modelo:** TS808 (original), TS9 (más brillante) y Mod (condensador de 100 nF que deja entrar más graves al recorte, diodos asimétricos 1+2 y más ganancia).
+- Mide unos 6 samples de latencia (0,13 ms), que se informan al host. El aliasing queda por debajo de -50 dB con una nota de 2,5 kHz a drive máximo, y consume ~1,9 % de un núcleo.
+
 ### IR Loader (Cab)
 
 - Dos IR estéreo (A y B), cada una con nivel y pan, más low/high cut y mezcla. La convolución usa `juce::dsp::Convolution` con latencia cero en una cola compartida.
 - Las IR no se recortan, para no romper la relación de fase entre los micros A y B.
 - **Desacople condicional:** si hay un NAM End-to-End aguas arriba (y no está en bypass), el motor marca el IR Loader. El bloque hace un fundido a seco de 30 ms y deja de convolucionar. Funciona aparte del bypass manual y de las escenas, y se puede desactivar con el parámetro "Auto E2E".
+
+**Gabinetes KumAmp:** IR propias, sintetizadas por el plugin (no son grabaciones de terceros, así que se distribuyen con la licencia del proyecto). Aparecen en el selector de IR, agrupadas por gabinete, con 5 opciones de micrófono cada uno: dinámico al centro, dinámico al borde, cinta, condensador y dinámico + cinta.
+
+| Guitarra | Bajo |
+|----------|------|
+| 1x10, 2x10, 4x10 americano abierto · 1x12 americano abierto · 1x12 británico cerrado · 2x12 británico abierto · 2x12 moderno cerrado · 4x12 británico vintage · 4x12 británico moderno | 1x15 cerrado · 8x10 cerrado |
+
+Cada IR sale de una respuesta en magnitud con varias capas: resonancia del parlante, carga del gabinete (cerrado, o abierto con cancelación de la onda trasera), modos de la caja, rolloff y break-up del cono, y la voz del micrófono. Esa respuesta se convierte en un impulso de fase mínima con el cepstrum real, y se le suman las reflexiones tempranas del gabinete. El 4x12 moderno está calibrado contra IRs medidas de un 4x12 cerrado con parlantes británicos de 30 W: la diferencia es de ±2 dB entre 40 Hz y 8 kHz, en bandas de 1/6 de octava. En los presets se guardan como `kumamp:cab/<gabinete>/<micro>`, sin archivos, así que funcionan en cualquier máquina.
 
 Las rutas de los modelos y las IR se guardan en el estado del plugin y se recargan al abrir el proyecto.
 
@@ -216,9 +253,10 @@ Los parámetros `tuner_reference`, `tuner_mute` y `tuner_mode` se guardan con el
 
 | Categoría | Bloques |
 |-----------|---------|
-| Entrada | Noise Gate (histéresis, hold, rango) · Afinador global |
+| Entrada | Noise Gate (histéresis, hold, rango; modo Avanzado multibanda) · Afinador global |
 | Pitch / Pre-FX | Pitch Shifter WSOLA · Wah (SVF TPT) · Auto-Wah · Octaver polifónico (-1 y +1 octava, WSOLA) |
-| Amp / Cab | NAM · IR Loader dual |
+| Drive | Overdrive (Tube Screamer TS808 / TS9 / Mod, oversampling 4x) |
+| Amp / Cab | NAM · IR Loader dual con 11 gabinetes KumAmp (55 IR) |
 | Dinámica / EQ | Compresor (detector de pico desacoplado, knee, mezcla en paralelo) · EQ paramétrico (6 etapas) · EQ gráfico de 10 bandas · Transient Shaper |
 | Modulación | Chorus · Flanger · Phaser (2 a 12 etapas) · Tremolo (de seno a cuadrada, auto-pan) · Rotary (horn/drum con Doppler e inercia) · Univibe · Bitcrusher |
 | Delay | Digital (ping-pong y filtros en la realimentación) · Analog (BBD: oscurece y satura) · Tape (wow, flutter, saturación, desgaste) · Reverse |
@@ -231,10 +269,11 @@ Cada bloque consume entre 0,03 % y 0,45 % de un núcleo de Apple Silicon (medido
 
 ### Preset por defecto
 
-`IN → Wah → Oct → Amp (NAM) → Cab (IR) → EQ → Chorus → Delay → Reverb → OUT`
+`IN → Synth → Wah → Oct → Drive → Amp (NAM) → Cab (IR) → EQ → Chorus → Delay → Reverb → OUT`
 
-Sin modelo ni IR cargados, los bloques Amp y Cab dejan pasar la señal sin cambios. La Macro 1 (pedal de expresión) controla el wah.
-El delay y el reverb arrancan apagados en todas las escenas (sus ajustes por escena ya están cargados para cuando los enciendas).
+Sin modelo cargado, el Amp deja pasar la señal sin cambios. El Cab trae cargado el 4x12 británico moderno de KumAmp pero arranca apagado (y, encendido, se desacopla solo con perfiles NAM End-to-End). La Macro 1 (pedal de expresión) controla el wah.
+El Guitar Synth va primero, porque su detector de notas necesita la guitarra limpia. Viene preparado como capa de Cuerdas en modo Instrumento, con Mezcla al 40 %.
+El synth, el overdrive, el cab, el delay y el reverb arrancan apagados en todas las escenas (sus ajustes por escena ya están cargados para cuando los enciendas).
 
 | Escena | Contenido |
 |--------|-----------|

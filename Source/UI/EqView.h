@@ -19,6 +19,9 @@ namespace kumamp
     - Coloured band nodes: drag = frequency / gain (Q for cuts, notch and band
       pass), mouse wheel = Q, Shift = fine, double-click empty space = new band,
       double-click a node = remove, right-click = type / slope / remove.
+    - Band listen (FabFilter style): Alt + click-and-hold a node to hear only
+      the region that band works on (you can keep dragging it), or latch it on
+      the selected band with the "Escuchar" button.
     - Selected band: edit strip with type, slope, frequency, gain and Q.
     The curve is computed with the same EqDesign code that runs the audio.
 */
@@ -65,6 +68,8 @@ private:
     static bool hasGain (EqBandType type) noexcept;
 
     void setBandParam (int band, ParametricEqBlock::BandParam param, float value);
+    void updateListen();
+    void releaseListen();
     void selectBand (int band);
     void showBandMenu (int band);
     void updateSpectrum (const SampleRing<8192>& ring, std::array<float, kFftSize / 2 + 1>& smoothed);
@@ -80,6 +85,9 @@ private:
     std::array<float, kFftSize / 2 + 1> preSpectrum {}, postSpectrum {};
 
     int selectedBand = -1, hoverBand = -1, dragBand = -1;
+    int heldListenBand = -1;      // Alt + click-and-hold
+    bool listenLatched = false;   // "Escuchar" button
+    bool ownsListen = false;      // this view set the block's listen band
     juce::Point<float> dragStart;
     EqBand dragStartBand;
 
@@ -88,6 +96,7 @@ private:
     juce::Slider freqKnob, gainKnob, qKnob, outputKnob;
     juce::Label freqLabel, gainLabel, qLabel, outputLabel;
     IconButton removeBand { theme::Icon::Trash, "Quitar banda" };
+    juce::TextButton listenButton { "Escuchar" };
     IconButton expandButton { theme::Icon::Expand, "Abrir EQ grande" };
     juce::TextButton closeButton { "Cerrar" };
     juce::Rectangle<int> stripArea;

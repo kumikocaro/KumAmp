@@ -18,7 +18,7 @@ endif()
 # Windows: runtime de MSVC estatico -> el usuario no necesita instalar el VC++ Redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(KumAmp VERSION 0.1.5 LANGUAGES C CXX)
+project(KumAmp VERSION 0.1.6 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -80,10 +80,13 @@ add_library(KumAmpCore STATIC
     Source/DSP/Utility/VolumeBlock.cpp
     Source/DSP/Pitch/PreFxBlocks.cpp
     Source/DSP/Pitch/GuitarSynthBlock.cpp
+    Source/DSP/Pitch/PolyNoteDetector.cpp
+    Source/DSP/Pitch/InstrumentSynth.cpp
     Source/DSP/Dynamics/DynamicsBlocks.cpp
     Source/DSP/Modulation/ModulationBlocks.cpp
     Source/DSP/Time/DelayBlocks.cpp
-    Source/DSP/Time/ReverbBlocks.cpp)
+    Source/DSP/Time/ReverbBlocks.cpp
+    Source/DSP/Cab/FactoryCabs.cpp)
 target_include_directories(KumAmpCore PUBLIC Source)
 target_link_libraries(KumAmpCore PRIVATE kumamp_compile_flags)
 set_target_properties(KumAmpCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -157,6 +160,7 @@ set(KUMAMP_JUCE_SOURCES
     Source/DSP/Amp/NamAmpBlock.cpp
     Source/DSP/Amp/NamProfileInfo.cpp
     Source/DSP/Cab/IrLoaderBlock.cpp
+    Source/DSP/Drive/OverdriveBlock.cpp
     Source/Tuner/Tuner.cpp
     Source/Presets/PresetManager.cpp
     Source/Tone3000/Tone3000.cpp

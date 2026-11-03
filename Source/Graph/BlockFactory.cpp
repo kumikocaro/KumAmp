@@ -66,7 +66,7 @@ std::shared_ptr<ParamStore> createStore (BlockType type, StoreId id)
         case BlockType::Volume:          return std::make_shared<VolumeBlock> (id);
         case BlockType::Splitter:
         case BlockType::Mixer:           return std::make_shared<RoutingParams> (id, type);
-        default:                         return nullptr;   // NamAmp / IrLoader register at runtime; Tuner is global
+        default:                         return nullptr;   // NamAmp / IrLoader / Overdrive register at runtime; Tuner is global
     }
 }
 
@@ -81,6 +81,7 @@ bool isImplemented (BlockType type) noexcept
         case BlockType::Tuner:      // the tuner is a global input feature, not a grid block
         case BlockType::NamAmp:     // registered by registerJuceBlocks()
         case BlockType::IrLoader:
+        case BlockType::Overdrive:
         case BlockType::NumTypes:
             return false;
         default:

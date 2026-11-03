@@ -49,6 +49,9 @@ public:
         "1/4 · 500 ms"); empty = show the value normally. The UI also locks the
         control while an override is active. */
     virtual std::string getDisplayOverride (int /*param*/) const { return {}; }
+    /** False hides a parameter that does nothing in the current mode (the panel
+        lays out only the relevant ones). Any thread. */
+    virtual bool isParamRelevant (int /*param*/) const noexcept { return true; }
 
     //== Host tempo (shared by the engine; any thread) ============================
     void setTempoSource (const std::atomic<double>* bpm) noexcept { tempoSource = bpm; }

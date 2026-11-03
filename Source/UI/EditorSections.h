@@ -68,6 +68,10 @@ private:
     juce::TextButton guitarButton { "GUITARRA" }, bassButton { "BAJO" };
     std::unique_ptr<juce::ParameterAttachment> instrumentAttachment;
 
+    // Clasico / Avanzado segmented switch for the input gate.
+    juce::TextButton classicGateButton { juce::CharPointer_UTF8 ("CL\xc3\x81SICO") }, advancedGateButton { "AVANZADO" };
+    std::unique_ptr<juce::ParameterAttachment> gateModeAttachment;
+
     Tuner::Reading reading;
     juce::uint32 lastValidTime = 0;
     Tuner::Reading lastValid;

@@ -18,6 +18,7 @@ Icon iconFor (BlockType type) noexcept
         case BlockType::TransientShaper: return Icon::Dynamics;
         case BlockType::ParametricEq:
         case BlockType::GraphicEq:       return Icon::Eq;
+        case BlockType::Overdrive:       return Icon::Drive;
         case BlockType::NamAmp:          return Icon::Amp;
         case BlockType::IrLoader:        return Icon::Speaker;
         case BlockType::Chorus:
@@ -46,6 +47,7 @@ const std::vector<PaletteGroup>& paletteGroups()
         { "Pitch",      Icon::Pitch,    { BlockType::PitchShifter, BlockType::Wah, BlockType::AutoWah, BlockType::Octaver, BlockType::GuitarSynth } },
         { "Dynamics",   Icon::Dynamics, { BlockType::NoiseGate, BlockType::Compressor, BlockType::TransientShaper } },
         { "EQ",         Icon::Eq,       { BlockType::ParametricEq, BlockType::GraphicEq } },
+        { "Drive",      Icon::Drive,    { BlockType::Overdrive } },
         { "NAM",        Icon::Amp,      { BlockType::NamAmp } },
         { "IR",         Icon::Speaker,  { BlockType::IrLoader } },
         { "Modulation", Icon::Sine,     { BlockType::Chorus, BlockType::Flanger, BlockType::Phaser, BlockType::Tremolo,
@@ -204,6 +206,15 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             }
             for (float x : { 5.5f, 9.5f, 14.5f, 18.5f })
                 p.addRectangle (juce::Rectangle<float> (P (x - 1.0f, 5), P (x + 1.0f, 12)));
+            break;
+        case Icon::Drive:   // soft-clipped wave (flattened tops)
+            p.startNewSubPath (P (2, 12));
+            for (int i = 1; i <= 40; ++i)
+            {
+                const float x = 2.0f + 20.0f * (float) i / 40.0f;
+                const float w = std::sin ((float) i / 40.0f * juce::MathConstants<float>::twoPi * 1.5f);
+                p.lineTo (P (x, 12.0f - 7.0f * std::tanh (2.6f * w) / std::tanh (2.6f)));
+            }
             break;
         case Icon::Expand:
             p.startNewSubPath (P (14, 4));  p.lineTo (P (20, 4));  p.lineTo (P (20, 10));

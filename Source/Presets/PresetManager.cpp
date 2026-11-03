@@ -24,7 +24,7 @@ juce::File PresetManager::getDefaultFolder()
 
 const juce::StringArray& PresetManager::globalParameterIds()
 {
-    static const juce::StringArray ids { "gate_on", "gate_threshold", "gate_release",
+    static const juce::StringArray ids { "gate_on", "gate_threshold", "gate_release", "gate_mode",
                                          "pitch_on", "pitch_semitones", "pitch_instrument",
                                          "output_gain" };
     return ids;
@@ -105,8 +105,8 @@ juce::Result PresetManager::save (const juce::String& name, const juce::String& 
         for (int i = 0; i < store.getNumProperties(); ++i)
         {
             const auto key = store.getPropertyName (i).toString();
-            if (! key.startsWith ("file_"))
-                continue;
+            if (! key.startsWith ("file_") || ! juce::File::isAbsolutePath (store.getProperty (key).toString()))
+                continue;   // factory cabinets ("kumamp:cab/...") are not files
             const juce::File model (store.getProperty (key).toString());
             store.setProperty ("rel_" + key, model.getRelativePathFrom (file.getParentDirectory()).replaceCharacter ('\\', '/'), nullptr);
         }
@@ -149,7 +149,7 @@ void PresetManager::relocateFiles (juce::ValueTree grid, const juce::File& prese
         for (int i = store.getNumProperties(); --i >= 0;)
         {
             const auto key = store.getPropertyName (i).toString();
-            if (! key.startsWith ("file_"))
+            if (! key.startsWith ("file_") || store.getProperty (key).toString().startsWith ("kumamp:"))
                 continue;
             const auto found = findMissing (store.getProperty (key).toString(), store.getProperty ("rel_" + key).toString(), presetFile);
             if (found != juce::File())

@@ -3,10 +3,12 @@
 #include "../Graph/BlockFactory.h"
 #include "../Graph/DSPBlock.h"
 #include "../DSP/Amp/NamAmpBlock.h"
+#include "../DSP/Cab/FactoryCabs.h"
 #include "../DSP/Cab/IrLoaderBlock.h"
 #include "../DSP/JuceBlocks.h"
 #include "../DSP/Dynamics/DynamicsBlocks.h"
 #include "../DSP/Modulation/ModulationBlocks.h"
+#include "../DSP/Pitch/GuitarSynthBlock.h"
 #include "../DSP/Pitch/PitchShifterBlock.h"
 #include "../DSP/Pitch/PreFxBlocks.h"
 #include "../DSP/Time/DelayBlocks.h"
@@ -552,8 +554,10 @@ void GridEngine::loadDefaultPreset()
     redoStack.clear();
     sceneNames = { "Crunch Ambient", "Lead", "Chorus Clean", "Octave Fuzz" };
 
+    auto synth  = createStore (BlockType::GuitarSynth, "Synth");
     auto wah    = createStore (BlockType::Wah, "Wah");
     auto oct    = createStore (BlockType::Octaver, "Oct");
+    auto drive  = createStore (BlockType::Overdrive, "Drive");
     auto amp    = createStore (BlockType::NamAmp, "Amp");
     auto cab    = createStore (BlockType::IrLoader, "Cab");
     auto eq     = createStore (BlockType::ParametricEq, "EQ");
@@ -561,10 +565,11 @@ void GridEngine::loadDefaultPreset()
     auto delay  = createStore (BlockType::DigitalDelay, "Delay");
     auto reverb = createStore (BlockType::PlateReverb, "Reverb");
 
-    // IN -> Wah -> Oct -> Amp -> Cab -> EQ -> Chorus -> Delay -> Reverb -> OUT
+    // IN -> Synth -> Wah -> Oct -> Drive -> Amp -> Cab -> EQ -> Chorus -> Delay -> Reverb -> OUT
+    // (the synth first: its note detection needs the clean guitar)
     GridModel m;
     NodeId previous = m.addNode (NodeKind::Input);
-    for (const auto& store : { wah, oct, amp, cab, eq, chorus, delay, reverb })
+    for (const auto& store : { synth, wah, oct, drive, amp, cab, eq, chorus, delay, reverb })
     {
         const NodeId node = m.addNode (NodeKind::Block, store->getId());
         m.connect ({ previous, 0 }, node);
@@ -573,14 +578,27 @@ void GridEngine::loadDefaultPreset()
     m.connect ({ previous, 0 }, m.addNode (NodeKind::Output));
     commitModel (std::move (m));
 
-    // Delay and reverb start bypassed in every scene (dry starting point); their
-    // settings are already dialled in per scene for when they are switched on.
+    // The cab has KumAmp's own 4x12 ready but starts off, like the drive (it also steps aside
+    // by itself for End-to-End NAM profiles once switched on).
+    if (auto* ir = dynamic_cast<DSPBlock*> (cab.get()))
+        ir->loadFile (0, cabs::pathFor ("4x12-moderno", "din-centro"));
+
+    // The synth waits as an instrument layer (strings under the guitar) for when it is switched on.
+    synth->setParam (GuitarSynthBlock::Mode, (float) GuitarSynthBlock::Voice::Instrument);
+    synth->setParam (GuitarSynthBlock::Sound, 5.0f);   // Cuerdas
+    synth->setParam (GuitarSynthBlock::Mix, 40.0f);
+
+    // Synth, drive, cab, delay and reverb start bypassed in every scene (dry starting point);
+    // their settings are already dialled in per scene for when they are switched on.
     auto setScene = [&] (bool wahOn, bool octOn, bool chorusOn, float delayMix, float delayMs,
                          float reverbMix, float midBoostDb)
     {
+        synth->setBypassed (true);
         wah->setBypassed (! wahOn);
         oct->setBypassed (! octOn);
         chorus->setBypassed (! chorusOn);
+        drive->setBypassed (true);
+        cab->setBypassed (true);
         delay->setBypassed (true);
         reverb->setBypassed (true);
         delay->setParam (DigitalDelayBlock::Mix, delayMix);
@@ -609,7 +627,7 @@ void GridEngine::loadDefaultPreset()
 
     // Macro 1 = expression pedal on the wah.
     assignMacro (0, wah->getId(), WahBlock::Position, 0.0f, 100.0f);
-    juce::ignoreUnused (amp, cab);
+    juce::ignoreUnused (amp);
 }
 
 //==============================================================================

@@ -56,6 +56,7 @@ private:
         std::unique_ptr<juce::TextButton> toggle;   // "sync"
         std::unique_ptr<juce::Label> name;
         std::unique_ptr<Pill> value;
+        bool relevant = true;   // DSPBlock::isParamRelevant (hidden when false)
     };
 
     struct FileSlot

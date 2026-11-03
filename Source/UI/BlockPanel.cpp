@@ -1,5 +1,6 @@
 #include "BlockPanel.h"
 #include "../Graph/DSPBlock.h"
+#include "../DSP/Cab/FactoryCabs.h"
 #include <utility>
 
 namespace kumamp
@@ -8,6 +9,17 @@ namespace
 {
     constexpr int kOpenLibraryId = 9998;    // file combo: open Documents/KumAmp/TONE3000
     constexpr int kLibraryBaseId = 20000;   // file combo: downloaded TONE3000 models
+    constexpr int kFactoryCabId  = 29999;   // file combo: the KumAmp cabinet currently loaded
+    constexpr int kFactoryBaseId = 30000;   // file combo: KumAmp cabinets, + cab * 16 + mic
+
+    /** A block file path as a juce::File; factory paths ("kumamp:cab/...") are not files. */
+    juce::File fileFor (const std::string& path)
+    {
+        const juce::String p (path);
+        return p.isEmpty() || cabs::isFactoryPath (path) || ! juce::File::isAbsolutePath (p) ? juce::File() : juce::File (p);
+    }
+
+    juce::String utf8 (const std::string& text) { return juce::String (juce::CharPointer_UTF8 (text.c_str())); }
 } // namespace
 
 void BlockPanel::Pill::paint (juce::Graphics& g)
@@ -38,7 +50,7 @@ void BlockPanel::chooseFile (int slot)
     if (block == nullptr)
         return;
 
-    auto start = juce::File (juce::String (block->getFilePath (slot)));
+    auto start = fileFor (block->getFilePath (slot));
     if (! start.existsAsFile())
         start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
 
@@ -68,8 +80,13 @@ void BlockPanel::populateFileSlot (int slot)
     fs.choices.clear();
     fs.files->clear (juce::dontSendNotification);
 
-    const juce::File current { juce::String (path) };
-    if (current.existsAsFile())
+    const juce::File current = fileFor (path);
+    if (cabs::isFactoryPath (path))
+    {
+        fs.files->addItem (utf8 (cabs::displayName (path)), kFactoryCabId);
+        fs.files->setSelectedId (kFactoryCabId, juce::dontSendNotification);
+    }
+    else if (current.existsAsFile())
     {
         // Every model / IR in the same folder, for quick A/B switching.
         for (const auto& entry : juce::RangedDirectoryIterator (current.getParentDirectory(), false,
@@ -83,7 +100,7 @@ void BlockPanel::populateFileSlot (int slot)
     else
     {
         fs.files->setTextWhenNothingSelected (path.empty() ? "Seleccionar " + juce::String (block->getFileSlotName (slot)) + "..."
-                                                           : juce::String ("No encontrado: ") + juce::File (juce::String (path)).getFileName());
+                                                           : juce::String ("No encontrado: ") + juce::String (path).replaceCharacter ('\\', '/').fromLastOccurrenceOf ("/", false, false));
     }
     // NAM amp: the TONE3000 library (Documents/KumAmp/TONE3000), one submenu per tone.
     fs.library.clear();
@@ -125,6 +142,29 @@ void BlockPanel::populateFileSlot (int slot)
             fs.files->addItem (juce::CharPointer_UTF8 ("Todav\xc3\xad" "a no descargaste tonos: us\xc3\xa1 el bot\xc3\xb3n TONE3000"), -1);
         fs.files->setItemEnabled (-1, false);
         fs.files->addItem ("Abrir carpeta de tonos", kOpenLibraryId);
+    }
+
+    // IR loader: KumAmp's own cabinets, one submenu per cabinet with its mic options.
+    if (store->getType() == BlockType::IrLoader)
+    {
+        int currentCab = -1, currentMic = -1;
+        cabs::parsePath (path, currentCab, currentMic);
+        fs.files->addSeparator();
+        const auto& list = cabs::cabinets();
+        for (bool bass : { false, true })
+        {
+            fs.files->addSectionHeading (bass ? "Gabinetes KumAmp: bajo" : "Gabinetes KumAmp: guitarra");
+            for (int c = 0; c < (int) list.size(); ++c)
+            {
+                if (list[(size_t) c].bass != bass)
+                    continue;
+                juce::PopupMenu sub;
+                for (int m = 0; m < (int) cabs::mics().size(); ++m)
+                    sub.addItem (kFactoryBaseId + c * 16 + m, utf8 (cabs::mics()[(size_t) m].name), true, c == currentCab && m == currentMic);
+                fs.files->getRootMenu()->addSubMenu (juce::String (list[(size_t) c].size) + "  " + utf8 (list[(size_t) c].name),
+                                                     sub, true, nullptr, c == currentCab);
+            }
+        }
     }
 
     fs.files->addSeparator();
@@ -217,6 +257,13 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
                     folder.startAsProcess();
                     return;
                 }
+                if (id == kFactoryCabId)
+                    return;
+                if (id >= kFactoryBaseId)
+                {
+                    b->loadFile (slot, cabs::pathFor ((id - kFactoryBaseId) / 16, (id - kFactoryBaseId) % 16));
+                    return;
+                }
                 if (id >= kLibraryBaseId)
                 {
                     const auto& library = fileSlots[(size_t) slot].library;
@@ -274,7 +321,7 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
             };
             addChildComponent (*combo);
             if (auto* b = dynamic_cast<DSPBlock*> (store.get()))
-                populateVariants (juce::File (juce::String (b->getFilePath (0))));
+                populateVariants (fileFor (b->getFilePath (0)));
         }
     }
 
@@ -369,6 +416,23 @@ void BlockPanel::refresh()
 
     auto* dspBlock = dynamic_cast<DSPBlock*> (store.get());
     const bool synced = syncParam >= 0 && store->getParam (syncParam) > 0.5f;
+
+    // Mode-dependent parameters: show only the ones that do something now.
+    bool relayout = false;
+    for (int i = 0; i < (int) controls.size(); ++i)
+    {
+        auto& c = controls[(size_t) i];
+        const bool relevant = dspBlock == nullptr || dspBlock->isParamRelevant (i);
+        if (relevant == c.relevant)
+            continue;
+        c.relevant = relevant;
+        relayout = true;
+        for (auto* component : std::initializer_list<juce::Component*> { c.slider.get(), c.combo.get(), c.toggle.get(), c.name.get(), c.value.get() })
+            if (component != nullptr)
+                component->setVisible (relevant);
+    }
+    if (relayout)
+        resized();
 
     for (int i = 0; i < (int) controls.size(); ++i)
     {
@@ -535,17 +599,24 @@ void BlockPanel::resized()
 
     std::vector<ParamControl*> knobs, choices;
     for (auto& c : controls)
-        (c.slider != nullptr ? knobs : choices).push_back (&c);
+        if (c.relevant)
+            (c.slider != nullptr ? knobs : choices).push_back (&c);
 
     if (! choices.empty())
     {
-        auto column = knobArea.removeFromRight (170);
+        // More than four choices: two columns, so every combo keeps a readable height.
+        const int numColumns = choices.size() > 4 ? 2 : 1;
+        const int perColumn = ((int) choices.size() + numColumns - 1) / numColumns;
+        auto columns = knobArea.removeFromRight (170 * numColumns + 8 * (numColumns - 1));
         knobArea.removeFromRight (12);
-        const int rowHeight = std::min (64, column.getHeight() / (int) choices.size());
-        auto stack = column.withSizeKeepingCentre (column.getWidth(), rowHeight * (int) choices.size());
-        for (auto* c : choices)
+        const int rowHeight = std::min (64, columns.getHeight() / perColumn);
+        for (int i = 0; i < (int) choices.size(); ++i)
         {
-            auto row = stack.removeFromTop (rowHeight);
+            auto* c = choices[(size_t) i];
+            const int columnIndex = i / perColumn;
+            auto column = columns.withX (columns.getX() + columnIndex * 178).withWidth (170);
+            auto stack = column.withSizeKeepingCentre (column.getWidth(), rowHeight * perColumn);
+            auto row = stack.withY (stack.getY() + (i % perColumn) * rowHeight).withHeight (rowHeight);
             c->name->setBounds (row.removeFromTop (22));
             c->name->setFont (juce::FontOptions (14.0f));
             if (c->combo != nullptr)  c->combo->setBounds (row.removeFromTop (34).reduced (4, 0));

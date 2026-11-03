@@ -74,12 +74,16 @@ EqView::EqView (bool compact) : compactMode (compact)
     }
 
     removeBand.onClick = [this] { if (selectedBand >= 0) { setBandParam (selectedBand, EQ::BandOn, 0.0f); selectBand (-1); } };
+    listenButton.setClickingTogglesState (true);
+    listenButton.setColour (juce::TextButton::buttonOnColourId, theme::accent);
+    listenButton.setTooltip ("Escuchar solo la zona de esta banda (tambien: Alt + clic sostenido sobre el punto)");
+    listenButton.onClick = [this] { listenLatched = listenButton.getToggleState(); updateListen(); repaint(); };
     expandButton.onClick = [this] { if (onExpand) onExpand(); };
     closeButton.onClick = [this] { if (onClose) onClose(); };
 
     for (juce::Component* c : { (juce::Component*) &typeBox, (juce::Component*) &slopeBox, (juce::Component*) &freqKnob, (juce::Component*) &gainKnob,
                                 (juce::Component*) &qKnob, (juce::Component*) &freqLabel, (juce::Component*) &gainLabel, (juce::Component*) &qLabel,
-                                (juce::Component*) &removeBand })
+                                (juce::Component*) &removeBand, (juce::Component*) &listenButton })
         addChildComponent (c);
     addAndMakeVisible (outputKnob);
     addAndMakeVisible (outputLabel);
@@ -88,12 +92,13 @@ EqView::EqView (bool compact) : compactMode (compact)
     expandButton.setVisible (compactMode);
     closeButton.setVisible (! compactMode);
     expandButton.setTooltip ("Abrir EQ grande");
-    setTooltip ("Doble clic: nueva banda  |  Arrastrar: freq / gain  |  Rueda: Q  |  Shift: fino  |  Clic derecho: tipo");
+    setTooltip ("Doble clic: nueva banda  |  Arrastrar: freq / gain  |  Rueda: Q  |  Shift: fino  |  Alt + clic: escuchar la banda  |  Clic derecho: tipo");
 }
 
 EqView::~EqView()
 {
     stopTimer();
+    releaseListen();
     if (auto* block = eq())
         block->setAnalyserEnabled (false);
 }
@@ -102,6 +107,9 @@ void EqView::setBlock (std::shared_ptr<ParamStore> eqStore)
 {
     if (auto* old = eq())
         old->setAnalyserEnabled (false);
+    releaseListen();
+    heldListenBand = -1;
+    listenLatched = false;
     store = std::move (eqStore);
     selectBand (-1);
     preSpectrum.fill (kAnalyserFloorDb);
@@ -117,7 +125,30 @@ void EqView::visibilityChanged()
     {
         stopTimer();
         if (auto* block = eq()) block->setAnalyserEnabled (false);
+        heldListenBand = -1;
+        listenLatched = false;
+        listenButton.setToggleState (false, juce::dontSendNotification);
+        releaseListen();
     }
+}
+
+void EqView::updateListen()
+{
+    auto* block = eq();
+    if (block == nullptr)
+        return;
+    const int band = heldListenBand >= 0 ? heldListenBand : (listenLatched ? selectedBand : -1);
+    if (band >= 0 || ownsListen)
+        block->setListenBand (band);
+    ownsListen = band >= 0;
+}
+
+void EqView::releaseListen()
+{
+    if (ownsListen)
+        if (auto* block = eq())
+            block->setListenBand (-1);
+    ownsListen = false;
 }
 
 //==============================================================================
@@ -185,6 +216,11 @@ void EqView::selectBand (int band)
 {
     selectedBand = band;
     const bool show = band >= 0;
+    if (! show)
+        listenLatched = false;   // nothing selected: stop listening
+    listenButton.setToggleState (listenLatched, juce::dontSendNotification);
+    listenButton.setVisible (show);
+    updateListen();
     for (juce::Component* c : { (juce::Component*) &typeBox, (juce::Component*) &freqKnob, (juce::Component*) &gainKnob,
                                 (juce::Component*) &qKnob, (juce::Component*) &freqLabel, (juce::Component*) &gainLabel,
                                 (juce::Component*) &qLabel, (juce::Component*) &removeBand })
@@ -395,6 +431,46 @@ void EqView::paint (juce::Graphics& g)
     g.fillPath (totalFill);
     g.setColour (juce::Colour (0xfffff3c4));
     g.strokePath (total, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // Band listen: shade the region being heard and say so.
+    const int listening = block->getListenBand();
+    if (listening >= 0 && bands[(size_t) listening].on)
+    {
+        const auto& band = bands[(size_t) listening];
+        float lo = area.getX(), hi = area.getRight();
+        switch (band.type)
+        {
+            case EqBandType::LowShelf:
+            case EqBandType::LowCut:    hi = freqToX (band.frequency); break;
+            case EqBandType::HighShelf:
+            case EqBandType::HighCut:   lo = freqToX (band.frequency); break;
+            case EqBandType::Bell:
+            case EqBandType::Notch:
+            case EqBandType::BandPass:
+            case EqBandType::NumTypes:
+            {
+                // -3 dB edges of the band pass: f * 2^(+-bandwidth / 2).
+                const float q = juce::jlimit (0.5f, 18.0f, band.q);
+                const float halfOctaves = std::asinh (1.0f / (2.0f * q)) / std::log (2.0f);
+                lo = freqToX (band.frequency * std::exp2 (-halfOctaves));
+                hi = freqToX (band.frequency * std::exp2 (halfOctaves));
+                break;
+            }
+        }
+        const auto colour = bandColour (listening);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRect (juce::Rectangle<float> (area.getX(), area.getY(), std::max (0.0f, lo - area.getX()), area.getHeight()));
+        g.fillRect (juce::Rectangle<float> (hi, area.getY(), std::max (0.0f, area.getRight() - hi), area.getHeight()));
+        g.setColour (colour.withAlpha (0.10f));
+        g.fillRect (juce::Rectangle<float> (lo, area.getY(), hi - lo, area.getHeight()));
+
+        const auto badge = juce::Rectangle<float> (area.getX() + 12.0f, area.getY() + 10.0f, 170.0f, 24.0f);
+        g.setColour (colour);
+        g.fillRoundedRectangle (badge, 12.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.85f));
+        g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+        g.drawText ("Escuchando banda " + juce::String (listening + 1), badge, juce::Justification::centred);
+    }
     g.restoreState();
 
     // Nodes.
@@ -486,7 +562,7 @@ void EqView::resized()
 
     // Edit strip: floating at the bottom of the plot (compact) or below it (large).
     const int stripHeight = compactMode ? 74 : 88;
-    stripArea = compactMode ? juce::Rectangle<int> (area.getX() + 60, area.getBottom() - stripHeight - 22, std::min (area.getWidth() - 220, 560), stripHeight)
+    stripArea = compactMode ? juce::Rectangle<int> (area.getX() + 60, area.getBottom() - stripHeight - 22, std::min (area.getWidth() - 220, 660), stripHeight)
                             : juce::Rectangle<int> (area.getX() + 40, area.getBottom() + 6, area.getWidth() - 80, stripHeight);
     auto s = stripArea.reduced (10, 6);
     s.removeFromLeft (80);   // "Banda n"
@@ -502,6 +578,8 @@ void EqView::resized()
         k->setBounds (c);
     }
     removeBand.setBounds (s.removeFromLeft (40).withSizeKeepingCentre (32, 32));
+    s.removeFromLeft (6);
+    listenButton.setBounds (s.removeFromLeft (92).withSizeKeepingCentre (92, 30));
     if (! compactMode)
     {
         auto c = stripArea.withLeft (stripArea.getRight() - 110).reduced (10, 6);
@@ -526,6 +604,11 @@ void EqView::mouseDown (const juce::MouseEvent& e)
 
     selectBand (band);
     dragBand = band;
+    if (band >= 0 && e.mods.isAltDown())
+    {
+        heldListenBand = band;   // Alt + hold: listen while the button is down
+        updateListen();
+    }
     if (band >= 0)
     {
         dragStart = e.position;
@@ -553,6 +636,11 @@ void EqView::mouseDrag (const juce::MouseEvent& e)
 void EqView::mouseUp (const juce::MouseEvent&)
 {
     dragBand = -1;
+    if (heldListenBand >= 0)
+    {
+        heldListenBand = -1;
+        updateListen();
+    }
     repaint();
 }
 

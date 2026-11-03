@@ -17,6 +17,7 @@ namespace
         { BlockType::AutoWah,         "auto_wah",         "Auto-Wah",         C::PitchPre },
         { BlockType::Octaver,         "octaver",          "Octaver",          C::PitchPre },
         { BlockType::GuitarSynth,     "guitar_synth",     "Guitar Synth",     C::PitchPre },
+        { BlockType::Overdrive,       "overdrive",        "Overdrive",        C::Drive },
         { BlockType::NamAmp,          "nam_amp",          "NAM Amp",          C::Amp },
         { BlockType::IrLoader,        "ir_loader",        "IR Loader",        C::Cab },
         { BlockType::Compressor,      "compressor",       "Compresor",        C::Dynamics },

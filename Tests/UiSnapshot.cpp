@@ -2,8 +2,10 @@
 // model), selects the amp block and writes the window to PNG.
 
 #include "DSP/Pitch/PitchShifterBlock.h"
+#include "DSP/Pitch/GuitarSynthBlock.h"
 #include "PluginEditor.h"
 #include "DSP/Time/DelayBlocks.h"
+#include "DSP/Cab/FactoryCabs.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -164,6 +166,15 @@ int main()
     pump (300);
     allOk = save ("editor_eq_large.png") && allOk;
 
+    // Band listen on the clicked band (3): shaded region + badge, then off again.
+    if (auto* eqBlock = dynamic_cast<kumamp::ParametricEqBlock*> (engine.getStore (engine.getModel().findNode (eqNode)->store).get()))
+    {
+        eqBlock->setListenBand (2);
+        pump (300);
+        allOk = save ("editor_eq_listen.png") && allOk;
+        eqBlock->setListenBand (-1);
+    }
+
     // Delay with tempo sync on.
     for (const auto& node : engine.getModel().getNodes())
         if (auto store = engine.getStore (node.store); store != nullptr && store->getType() == kumamp::BlockType::DigitalDelay)
@@ -202,6 +213,40 @@ int main()
     }
     pump (200);
     allOk = save ("editor_pitch_bass.png") && allOk;
+
+    // Guitar Synth in "Textura" mode, with the input gate in "Avanzado".
+    if (auto* param = processor.getParameters().getParameter ("gate_mode"))
+        param->setValueNotifyingHost (1.0f);
+    std::shared_ptr<kumamp::ParamStore> synthStore;
+    if (const auto* amp = engine.getModel().findNode (ampNode))
+    {
+        const auto synthNode = engine.insertBlock (amp->inputs[0], amp->id, kumamp::BlockType::GuitarSynth, false);
+        if (const auto* node = engine.getModel().findNode (synthNode))
+            if (auto store = engine.getStore (node->store))
+            {
+                store->setParam (kumamp::GuitarSynthBlock::Mode, 2.0f);
+                store->setParam (kumamp::GuitarSynthBlock::Mix, 35.0f);
+                synthStore = store;
+            }
+        pump (100);
+        for (auto* child : sections())
+            if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
+                gridView->selectNode (synthNode);
+    }
+    pump (200);
+    allOk = save ("editor_synth_texture.png") && allOk;
+
+    // Same block as an instrument with the arpeggiator: only the relevant controls show.
+    if (synthStore != nullptr)
+    {
+        synthStore->setParam (kumamp::GuitarSynthBlock::Mode, (float) kumamp::GuitarSynthBlock::Voice::Instrument);
+        synthStore->setParam (kumamp::GuitarSynthBlock::Sound, 7.0f);
+        synthStore->setParam (kumamp::GuitarSynthBlock::Sequence, 1.0f);
+        pump (300);
+        allOk = save ("editor_synth_instrument.png") && allOk;
+    }
+    if (auto* param = processor.getParameters().getParameter ("gate_mode"))
+        param->setValueNotifyingHost (0.0f);
 
     // PRESETS tab with a few presets in a temporary folder (never the user's Documents).
     {
@@ -291,6 +336,54 @@ int main()
 
         library.deleteRecursively();
         setTestEnv ("KUMAMP_TONE3000_DIR", {});
+    }
+
+    // Overdrive panel and the IR loader with KumAmp's own cabinets.
+    {
+        kumamp::NodeId driveNode = kumamp::kInvalidNode, cabNode = kumamp::kInvalidNode;
+        for (const auto& node : engine.getModel().getNodes())
+            if (auto store = engine.getStore (node.store))
+            {
+                if (store->getType() == kumamp::BlockType::Overdrive) driveNode = node.id;
+                if (store->getType() == kumamp::BlockType::IrLoader)  cabNode = node.id;
+            }
+        auto select = [&] (kumamp::NodeId id)
+        {
+            for (auto* child : sections())
+                if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
+                {
+                    gridView->selectNode (kumamp::kInvalidNode);
+                    pump (20);
+                    gridView->selectNode (id);
+                }
+            pump (300);
+        };
+        select (driveNode);
+        allOk = save ("editor_drive.png") && driveNode != kumamp::kInvalidNode && allOk;
+        select (cabNode);
+        allOk = save ("editor_cab.png") && allOk;
+
+        int factoryMenus = 0, factoryItems = 0;
+        bool headings = false;
+        std::function<void (juce::Component&)> scan = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* combo = dynamic_cast<juce::ComboBox*> (child); combo != nullptr && combo->getText().contains ("4x12") && factoryMenus == 0)
+                    for (juce::PopupMenu::MenuItemIterator it (*combo->getRootMenu(), true); it.next();)
+                    {
+                        const auto& item = it.getItem();
+                        headings = headings || (item.isSectionHeader && item.text.startsWith ("Gabinetes KumAmp"));
+                        factoryMenus += item.subMenu != nullptr ? 1 : 0;
+                        factoryItems += item.itemID >= 30000 ? 1 : 0;
+                    }
+                scan (*child);
+            }
+        };
+        scan (*editor);
+        std::printf ("factory cabs in IR selector: headings %d, %d cab menus, %d IRs\n", (int) headings, factoryMenus, factoryItems);
+        allOk = allOk && headings && factoryMenus == (int) kumamp::cabs::cabinets().size()
+                && factoryItems == (int) (kumamp::cabs::cabinets().size() * kumamp::cabs::mics().size());
     }
 
     // TONE3000 model chooser (fake tone, nothing is downloaded).

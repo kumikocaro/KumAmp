@@ -3,7 +3,10 @@
 // IR convolution, state round-trip and "no operator new on the audio path".
 
 #include "DSP/Amp/NamAmpBlock.h"
+#include "DSP/Cab/FactoryCabs.h"
 #include "DSP/Cab/IrLoaderBlock.h"
+#include "DSP/Drive/OverdriveBlock.h"
+#include "DSP/Pitch/GuitarSynthBlock.h"
 #include "Engine/GridEngine.h"
 #include "Presets/PresetManager.h"
 #include "Tone3000/Tone3000.h"
@@ -271,6 +274,187 @@ void testIrConvolution()
     }
     CHECK (std::abs (l[5] - 1.0f) < 1.0e-4f && std::abs (l[15]) < 1.0e-4f);
 }
+namespace
+{
+    struct Tone
+    {
+        double rms = 0.0;
+        double harmonics = 0.0;   // energy at 2f..10f relative to f (dB)
+        double aliases = 0.0;     // energy off the harmonic series relative to f (dB)
+    };
+
+    /** Overdrive steady-state analysis of a sine (DFT on 0.5 s after 0.25 s of settling). */
+    Tone analyseOverdrive (OverdriveBlock& od, double hz, float amplitude)
+    {
+        constexpr double sr = 48000.0;
+        const int settle = 12000, length = 24000;
+        std::vector<float> out;
+        std::vector<float> l (kBlock), r (kBlock);
+        od.reset();
+        for (int pos = 0; pos < settle + length; pos += kBlock)
+        {
+            for (int i = 0; i < kBlock; ++i)
+                l[(size_t) i] = r[(size_t) i] = amplitude * (float) std::sin (2.0 * juce::MathConstants<double>::pi * hz * (pos + i) / sr);
+            od.process (l.data(), r.data(), kBlock);
+            for (int i = 0; i < kBlock; ++i)
+                if (pos + i >= settle && (int) out.size() < length)
+                    out.push_back (l[(size_t) i]);
+        }
+        auto energyAt = [&] (double f)
+        {
+            double re = 0, im = 0;
+            for (size_t n = 0; n < out.size(); ++n)
+            {
+                const double w = 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * (double) n / (double) out.size());
+                re += w * out[n] * std::cos (2.0 * juce::MathConstants<double>::pi * f * (double) n / sr);
+                im -= w * out[n] * std::sin (2.0 * juce::MathConstants<double>::pi * f * (double) n / sr);
+            }
+            return re * re + im * im;
+        };
+        Tone t;
+        for (float x : out) t.rms += (double) x * x;
+        t.rms = std::sqrt (t.rms / (double) out.size());
+        const double fundamental = energyAt (hz) + 1e-30;
+        double harm = 0, alias = 0;
+        for (int k = 2; k <= 10 && k * hz < sr / 2; ++k)
+            harm += energyAt (k * hz);
+        // Aliases: every FFT bin away from the harmonic series (folded products land in between).
+        constexpr int order = 14, size = 1 << order;
+        std::vector<float> spectrum (2 * size, 0.0f);
+        for (int n = 0; n < size; ++n)
+            spectrum[(size_t) n] = out[(size_t) n] * (float) (0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * n / size));
+        juce::dsp::FFT (order).performFrequencyOnlyForwardTransform (spectrum.data());
+        double fundBin = 0.0;
+        for (int b = 1; b < size / 2; ++b)
+        {
+            const double f = b * sr / size, nearest = std::round (f / hz) * hz;
+            const double e = (double) spectrum[(size_t) b] * spectrum[(size_t) b];
+            if (std::abs (f - hz) < 4 * sr / size) fundBin += e;
+            else if (std::abs (f - nearest) > 6 * sr / size && f > 30.0) alias += e;
+        }
+        alias /= fundBin + 1e-30;
+        t.harmonics = 10.0 * std::log10 (harm / fundamental + 1e-30);
+        t.aliases = 10.0 * std::log10 (alias + 1e-30);
+        return t;
+    }
+} // namespace
+
+void testOverdrive()
+{
+    std::puts ("Overdrive (Tube Screamer model)");
+    OverdriveBlock od (1);
+    od.prepare (48000.0, kBlock);
+    const float in = 0.25f;   // -12 dBFS peak guitar
+    const double inRms = in / std::sqrt (2.0);
+
+    for (float drive : { 0.0f, 50.0f, 100.0f })
+    {
+        od.setParam (OverdriveBlock::Drive, drive);
+        const auto t = analyseOverdrive (od, 220.0, in);
+        std::printf ("  drive %3.0f%%: level %+5.1f dB  harmonics %+6.1f dB\n", drive,
+                     20.0 * std::log10 (t.rms / inRms), t.harmonics);
+        CHECK (std::isfinite (t.rms));
+        CHECK (std::abs (20.0 * std::log10 (t.rms / inRms)) < 9.0);   // usable around unity
+    }
+    od.setParam (OverdriveBlock::Drive, 10.0f);
+    const auto low = analyseOverdrive (od, 220.0, in);
+    od.setParam (OverdriveBlock::Drive, 100.0f);
+    const auto high = analyseOverdrive (od, 220.0, in);
+    CHECK (high.harmonics > low.harmonics + 3.0);   // more drive = more distortion
+
+    // Aliasing: a high note at full drive (4x oversampling keeps folded products down).
+    const auto alias = analyseOverdrive (od, 2489.0, in);
+    std::printf ("  2489 Hz full drive: aliases %.1f dB re fundamental\n", alias.aliases);
+    CHECK (alias.aliases < -45.0);
+
+    for (int model = 0; model < 3; ++model)
+    {
+        od.setParam (OverdriveBlock::Model, (float) model);
+        const auto t = analyseOverdrive (od, 110.0, in);
+        CHECK (std::isfinite (t.rms) && t.rms > 0.01);
+    }
+
+    // Reported latency matches the oversampling filters: a click comes out at that delay.
+    od.setParam (OverdriveBlock::Model, 0.0f);
+    od.setParam (OverdriveBlock::Drive, 0.0f);
+    od.reset();
+    std::vector<float> l (kBlock, 0.0f), r (kBlock, 0.0f);
+    l[0] = r[0] = 0.02f;
+    od.process (l.data(), r.data(), kBlock);
+    int peak = 0;
+    for (int i = 1; i < kBlock; ++i)
+        if (std::abs (l[(size_t) i]) > std::abs (l[(size_t) peak])) peak = i;
+    std::printf ("  latency %d samples, impulse peak at %d\n", od.getLatencySamples(), peak);
+    CHECK (std::abs (peak - od.getLatencySamples()) <= 3);
+
+    // RT safety and CPU.
+    const int before = gAudioAllocations.load();
+    const auto start = juce::Time::getMillisecondCounterHiRes();
+    for (int b = 0; b < 48000 * 5 / kBlock; ++b)
+    {
+        for (int i = 0; i < kBlock; ++i)
+            l[(size_t) i] = r[(size_t) i] = 0.3f * (float) std::sin (0.05 * (b * kBlock + i));
+        AudioScope scope;
+        od.process (l.data(), r.data(), kBlock);
+    }
+    const double cpu = (juce::Time::getMillisecondCounterHiRes() - start) / 5000.0 * 100.0;
+    std::printf ("  CPU %.2f %% of one core, audio-thread allocations %d\n", cpu, gAudioAllocations.load() - before);
+    CHECK (gAudioAllocations.load() == before);
+}
+
+void testFactoryCabs()
+{
+    std::puts ("KumAmp factory cabinets");
+    const auto& cabList = cabs::cabinets();
+    CHECK (cabList.size() >= 10);
+    std::vector<std::vector<float>> rendered;
+    for (int c = 0; c < (int) cabList.size(); ++c)
+        for (int m = 0; m < (int) cabs::mics().size(); ++m)
+        {
+            const auto path = cabs::pathFor (c, m);
+            int pc = -1, pm = -1;
+            CHECK (cabs::parsePath (path, pc, pm) && pc == c && pm == m);
+            CHECK (! cabs::displayName (path).empty());
+            const auto ir = cabs::render (c, m);
+            CHECK (ir.size() > 2000);
+            float peak = 0.0f;
+            bool finite = true;
+            for (float x : ir) { peak = std::max (peak, std::abs (x)); finite = finite && std::isfinite (x); }
+            CHECK (finite);
+            CHECK_NEAR (peak, 0.5f, 1e-4);
+            for (const auto& other : rendered)
+                CHECK (other != ir);   // every option is a different IR
+            rendered.push_back (ir);
+        }
+    CHECK (cabs::render (0, 0) == cabs::render (0, 0));   // deterministic
+    int c, m;
+    CHECK (! cabs::parsePath ("kumamp:cab/nope/din-centro", c, m));
+    CHECK (! cabs::isFactoryPath ("/Users/x/cab.wav"));
+    CHECK (cabs::pathFor ("4x12-moderno", "nope").empty());
+
+    // Through the IR loader: the convolution kicks in and the status names the cab.
+    IrLoaderBlock block (1);
+    block.prepare (48000.0, kBlock);
+    const auto path = cabs::pathFor ("4x12-moderno", "din-centro");
+    CHECK (block.loadFile (0, path));
+    CHECK (block.getFilePath (0) == path);
+    std::vector<float> l (kBlock), r (kBlock);
+    bool filtered = false;
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 10000.0;
+    while (! filtered && juce::Time::getMillisecondCounterHiRes() < deadline)
+    {
+        std::fill (l.begin(), l.end(), 0.0f);
+        std::fill (r.begin(), r.end(), 0.0f);
+        l[0] = r[0] = 1.0f;
+        block.process (l.data(), r.data(), kBlock);
+        filtered = std::abs (l[0] - 1.0f) > 0.05f;
+        juce::Thread::sleep (5);
+    }
+    std::printf ("  status: %s\n", block.getStatusText().c_str());
+    CHECK (filtered);
+    CHECK (juce::String (block.getStatusText()).contains ("4x12"));
+}
+
 void testTunerPipeline()
 {
     std::puts ("tuner: audio thread -> fifo -> analysis thread");
@@ -531,6 +715,58 @@ void testDefaultPresetDryEffects()
                 ++snapshots;
             }
     CHECK (snapshots == 8);   // 2 blocks x 4 scenes
+
+    // Overdrive right before the amp, off in every scene; the cab starts on a KumAmp 4x12.
+    StoreId driveStore = 0;
+    for (const auto& node : engine.getModel().getNodes())
+        if (auto s = engine.getStore (node.store))
+        {
+            if (s->getType() == BlockType::Overdrive)
+            {
+                driveStore = s->getId();
+                CHECK (s->isBypassed());
+            }
+            if (s->getType() == BlockType::IrLoader)
+                if (auto* ir = dynamic_cast<DSPBlock*> (s.get()))
+                {
+                    CHECK (cabs::isFactoryPath (ir->getFilePath (0)));
+                    CHECK (s->isBypassed());   // ready, but off until switched on
+                }
+            if (s->getType() == BlockType::NamAmp)
+                for (const auto& in : node.inputs)
+                    if (const auto* source = engine.getModel().findNode (in.node))
+                        CHECK (source->store == driveStore && driveStore != 0);
+        }
+    CHECK (driveStore != 0);
+    for (const auto& sc : state.getChildWithName ("Scenes"))
+        for (const auto& sn : sc)
+            if ((StoreId) (int) sn.getProperty ("store") == driveStore)
+                CHECK ((bool) sn.getProperty ("bypass"));
+
+    // Guitar synth first in the chain (clean guitar for its note detection), set up as an
+    // instrument layer and off in every scene.
+    StoreId synthStore = 0;
+    for (const auto& node : engine.getModel().getNodes())
+        if (auto s = engine.getStore (node.store))
+            if (s->getType() == BlockType::GuitarSynth)
+            {
+                synthStore = s->getId();
+                CHECK (s->isBypassed());
+                CHECK (std::lround (s->getParam (GuitarSynthBlock::Mode)) == (long) GuitarSynthBlock::Voice::Instrument);
+                for (const auto& in : node.inputs)
+                    if (const auto* source = engine.getModel().findNode (in.node))
+                        CHECK (source->kind == NodeKind::Input);
+            }
+    CHECK (synthStore != 0);
+    int synthSnapshots = 0;
+    for (const auto& sc : state.getChildWithName ("Scenes"))
+        for (const auto& sn : sc)
+            if ((StoreId) (int) sn.getProperty ("store") == synthStore)
+            {
+                CHECK ((bool) sn.getProperty ("bypass"));
+                ++synthSnapshots;
+            }
+    CHECK (synthSnapshots == 4);
 }
 
 void testPresets()
@@ -752,6 +988,8 @@ int main()
     testNamModel ("A2.nam", 44100.0);           // resampled through RateBridge
     testEndToEndDecouplesIr();
     testIrConvolution();
+    testOverdrive();
+    testFactoryCabs();
     testTunerPipeline();
     testTunerSnapshots();
     testGridEditing();

@@ -1,5 +1,6 @@
 #include "DynamicsBlocks.h"
 
+#include <cstring>
 #include <iterator>
 
 namespace kumamp
@@ -31,6 +32,9 @@ namespace
         { "hold",       "Hold",         0.0f,  500.0f,  40.0f, "ms", false },
         { "release",    "Release",      5.0f, 2000.0f, 150.0f, "ms", false },
         { "range",      "Rango",      -90.0f,    0.0f, -90.0f, "dB", false },
+        { "mode",       "Modo",         0.0f,    1.0f,   0.0f, "Clasico|Avanzado", true },
+        { "high",       "Agudos",       0.0f,   24.0f,   6.0f, "dB", false },     // Avanzado: highs close this much sooner
+        { "split",      "Corte",     1000.0f, 6000.0f, 2500.0f, "Hz", false },    // Avanzado: where the highs start
     };
     static_assert (std::size (kGateParams) == NoiseGateBlock::NumParams);
 
@@ -101,19 +105,105 @@ NoiseGateBlock::NoiseGateBlock (StoreId id) : DSPBlock (id, BlockType::NoiseGate
 void NoiseGateBlock::prepareBlock (double sampleRate, int)
 {
     detector.setTimes (sampleRate, 0.1f, 20.0f);
+    highDetector.setTimes (sampleRate, 0.1f, 12.0f);
+    for (auto& f : keyHighPass)
+        f.setHighPass (sampleRate, 100.0f);
+    lastSplitHz = -1.0f;
     resetBlock();
 }
 
 void NoiseGateBlock::resetBlock() noexcept
 {
     detector.reset();
-    gain = dbToGain (getParam (RangeDb));
-    open = false;
-    holdCounter = 0;
+    highDetector.reset();
+    for (auto& f : keyHighPass) f.reset();
+    for (auto& f : splitLowPass) f.reset();
+    for (auto& ch : highKey) for (auto& f : ch) f.reset();
+    gain = highGain = dbToGain (getParam (RangeDb));
+    open = highOpen = false;
+    holdCounter = highHoldCounter = 0;
+}
+
+void NoiseGateBlock::processAdvanced (float* left, float* right, int numSamples) noexcept
+{
+    const double sr = getSampleRate();
+    const float threshold  = getParam (ThresholdDb), hysteresis = getParam (HysteresisDb);
+    const float openLevel  = toLinear (threshold);
+    const float closeLevel = toLinear (threshold - hysteresis);
+    const float highOpenLevel  = toLinear (threshold + getParam (HighDb));
+    const float highCloseLevel = toLinear (threshold + getParam (HighDb) - hysteresis);
+    const float floorGain  = dbToGain (getParam (RangeDb));
+    const int holdSamples  = (int) (getParam (HoldMs) * 0.001f * (float) sr);
+    const float attackC    = EnvelopeFollower::coefficient (sr, getParam (AttackMs));
+    const float releaseC   = EnvelopeFollower::coefficient (sr, getParam (ReleaseMs));
+    const float highReleaseC = EnvelopeFollower::coefficient (sr, 0.35f * getParam (ReleaseMs));
+
+    if (const float split = getParam (SplitHz); ! exactlyEqual (split, lastSplitHz))
+    {
+        for (auto& f : splitLowPass)
+            f.setLowPass (sr, split);
+        for (auto& ch : highKey)
+            for (auto& f : ch)
+                f.setHighPass (sr, split);
+        lastSplitHz = split;
+    }
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        // Key: without hum, so mains buzz never holds the gate open.
+        const float keyed = std::max (std::abs (keyHighPass[0].process (left[i])), std::abs (keyHighPass[1].process (right[i])));
+        const float level = detector.process (keyed);
+        if (level >= openLevel)
+        {
+            open = true;
+            holdCounter = holdSamples;
+        }
+        else if (open && level < closeLevel)
+        {
+            if (holdCounter > 0) --holdCounter;
+            else open = false;
+        }
+
+        // Complementary split: low + high == input, so an open gate is transparent.
+        const float lowL = splitLowPass[0].process (left[i]), lowR = splitLowPass[1].process (right[i]);
+        const float highL = left[i] - lowL, highR = right[i] - lowR;
+
+        // The highs detector listens through a 24 dB/oct high-pass: the gentle audio
+        // split would let the ringing fundamental hold the highs open.
+        const float keyL = highKey[0][1].process (highKey[0][0].process (left[i]));
+        const float keyR = highKey[1][1].process (highKey[1][0].process (right[i]));
+        const float highLevel = highDetector.process (std::max (std::abs (keyL), std::abs (keyR)));
+        if (open && highLevel >= highOpenLevel)
+        {
+            highOpen = true;
+            highHoldCounter = holdSamples / 2;
+        }
+        else if (highOpen && (! open || highLevel < highCloseLevel))
+        {
+            if (highHoldCounter > 0 && open) --highHoldCounter;
+            else highOpen = false;
+        }
+
+        const float target = open ? 1.0f : floorGain;
+        gain = target + (target > gain ? attackC : releaseC) * (gain - target);
+        const float highTarget = highOpen ? 1.0f : floorGain;
+        highGain = highTarget + (highTarget > highGain ? attackC : highReleaseC) * (highGain - highTarget);
+
+        const float h = std::min (gain, highGain);   // the highs never open beyond the main gate
+        left[i]  = lowL * gain + highL * h;
+        right[i] = lowR * gain + highR * h;
+    }
+    meterGainDb.store (toDb (gain), std::memory_order_relaxed);
 }
 
 void NoiseGateBlock::processBlock (float* left, float* right, int numSamples) noexcept
 {
+    if (getParam (Mode) > 0.5f)
+    {
+        processAdvanced (left, right, numSamples);
+        return;
+    }
+
     const double sr = getSampleRate();
     const float openLevel  = toLinear (getParam (ThresholdDb));
     const float closeLevel = toLinear (getParam (ThresholdDb) - getParam (HysteresisDb));
@@ -218,6 +308,9 @@ EqBand ParametricEqBlock::getBand (int b) const noexcept
 void ParametricEqBlock::prepareBlock (double sampleRate, int maxBlockSize)
 {
     monoScratch.assign ((size_t) maxBlockSize, 0.0f);
+    dryLeft.assign ((size_t) maxBlockSize, 0.0f);
+    dryRight.assign ((size_t) maxBlockSize, 0.0f);
+    listenMix.prepare (sampleRate, 0.015);
     output.prepare (sampleRate, 0.02);
     resetBlock();
 }
@@ -230,6 +323,40 @@ void ParametricEqBlock::resetBlock() noexcept
                 f.reset();
     updateBands (true);
     output.setCurrentAndTarget (dbToGain (getParam (OutputDb)));
+    for (auto& ch : listenFilters)
+        for (auto& f : ch)
+            f.reset();
+    listenFilterBand = -1;
+    listenMix.setCurrentAndTarget (getListenBand() >= 0 ? 1.0f : 0.0f);
+}
+
+void ParametricEqBlock::updateListenFilter (int band) noexcept
+{
+    // Follows the smoothed band, so dragging a node while listening sweeps smoothly.
+    const auto& b = bands[(size_t) band].smoothed;
+    const double sr = getSampleRate();
+    const float hz = std::clamp (b.frequency, 20.0f, 0.45f * (float) sr);
+    const float q = std::clamp (b.q, 0.5f, 18.0f);
+    const bool newBand = band != listenFilterBand || b.type != listenType;
+    for (auto& ch : listenFilters)
+        for (auto& f : ch)
+        {
+            switch (b.type)
+            {
+                case EqBandType::LowShelf:
+                case EqBandType::LowCut:    f.setLowPass (sr, hz); break;
+                case EqBandType::HighShelf:
+                case EqBandType::HighCut:   f.setHighPass (sr, hz); break;
+                case EqBandType::Bell:
+                case EqBandType::Notch:
+                case EqBandType::BandPass:
+                case EqBandType::NumTypes:  f.setBandPass (sr, hz, q); break;
+            }
+            if (newBand)
+                f.reset();
+        }
+    listenFilterBand = band;
+    listenType = b.type;
 }
 
 void ParametricEqBlock::updateBands (bool snap) noexcept
@@ -275,6 +402,20 @@ void ParametricEqBlock::processBlock (float* left, float* right, int numSamples)
     updateBands (false);
     output.setTarget (dbToGain (getParam (OutputDb)));
 
+    // Band listen: keep the input to filter it (crossfaded in / out over 15 ms).
+    int listen = getListenBand();
+    if (listen >= 0 && ! bands[(size_t) listen].smoothed.on)
+        listen = -1;   // the band was switched off / removed
+    if (listen >= 0)
+        updateListenFilter (listen);
+    listenMix.setTarget (listen >= 0 ? 1.0f : 0.0f);
+    const bool listening = listen >= 0 || listenMix.isSmoothing() || listenMix.getCurrent() > 0.0f;
+    if (listening)
+    {
+        std::memcpy (dryLeft.data(), left, sizeof (float) * (size_t) numSamples);
+        std::memcpy (dryRight.data(), right, sizeof (float) * (size_t) numSamples);
+    }
+
     float* channels[] { left, right };
     for (auto& band : bands)
         for (int s = 0; s < band.numStages; ++s)
@@ -291,6 +432,25 @@ void ParametricEqBlock::processBlock (float* left, float* right, int numSamples)
         const float g = output.next();
         left[i] *= g;
         right[i] *= g;
+    }
+
+    if (listening && listenFilterBand >= 0)
+    {
+        // Cuts and shelves: two stages (24 dB/oct) so the region is clearly isolated.
+        const bool twoStages = listenType != EqBandType::Bell && listenType != EqBandType::Notch && listenType != EqBandType::BandPass;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float l = listenFilters[0][0].process (dryLeft[(size_t) i]);
+            float r = listenFilters[1][0].process (dryRight[(size_t) i]);
+            if (twoStages)
+            {
+                l = listenFilters[0][1].process (l);
+                r = listenFilters[1][1].process (r);
+            }
+            const float m = listenMix.next();
+            left[i]  += (l - left[i]) * m;
+            right[i] += (r - right[i]) * m;
+        }
     }
 
     if (analyse)

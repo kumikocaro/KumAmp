@@ -1,4 +1,5 @@
 #include "IrLoaderBlock.h"
+#include "FactoryCabs.h"
 #include "../../Core/DspMath.h"
 
 #include <iterator>
@@ -66,7 +67,29 @@ std::string IrLoaderBlock::getStatusText() const
 void IrLoaderBlock::loadImpulse (int slot)
 {
     const std::lock_guard<std::mutex> guard (pathLock);
-    const juce::File file { juce::String (paths[(size_t) slot]) };
+    const auto& path = paths[(size_t) slot];
+
+    // KumAmp's own cabinets: synthesised here, no file involved.
+    if (cabs::isFactoryPath (path))
+    {
+        int cab, mic;
+        if (! cabs::parsePath (path, cab, mic))
+        {
+            statuses[(size_t) slot] = "Gabinete desconocido";
+            return;
+        }
+        constexpr double kRate = 48000.0;   // the convolution resamples it to the session rate
+        const auto ir = cabs::render (cab, mic, kRate);
+        juce::AudioBuffer<float> buffer (1, (int) ir.size());
+        buffer.copyFrom (0, 0, ir.data(), (int) ir.size());
+        convolutions[(size_t) slot].loadImpulseResponse (std::move (buffer), kRate, juce::dsp::Convolution::Stereo::no,
+                                                         juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::yes);
+        loaded[(size_t) slot].store (true);
+        statuses[(size_t) slot] = cabs::displayName (path);
+        return;
+    }
+
+    const juce::File file { juce::String (path) };
 
     if (! file.existsAsFile())
     {

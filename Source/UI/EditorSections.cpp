@@ -183,6 +183,30 @@ Sidebar::Sidebar (juce::AudioProcessorValueTreeState& parameters)
         bassButton.onClick   = [this] { if (bassButton.getToggleState())   instrumentAttachment->setValueAsCompleteGesture (1.0f); };
         instrumentAttachment->sendInitialUpdate();
     }
+    for (auto* b : { &classicGateButton, &advancedGateButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (2);
+        addAndMakeVisible (*b);
+    }
+    classicGateButton.setConnectedEdges (juce::Button::ConnectedOnRight);
+    advancedGateButton.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    if (auto* mode = parameters.getParameter ("gate_mode"))
+    {
+        gateModeAttachment = std::make_unique<juce::ParameterAttachment> (*mode, [this] (float index)
+        {
+            const bool advanced = index >= 0.5f;
+            classicGateButton.setToggleState (! advanced, juce::dontSendNotification);
+            advancedGateButton.setToggleState (advanced, juce::dontSendNotification);
+        });
+        classicGateButton.onClick  = [this] { if (classicGateButton.getToggleState())  gateModeAttachment->setValueAsCompleteGesture (0.0f); };
+        advancedGateButton.onClick = [this] { if (advancedGateButton.getToggleState()) gateModeAttachment->setValueAsCompleteGesture (1.0f); };
+        gateModeAttachment->sendInitialUpdate();
+    }
+    classicGateButton.setTooltip (juce::CharPointer_UTF8 ("Gate cl\xc3\xa1sico: una sola banda"));
+    advancedGateButton.setTooltip (juce::CharPointer_UTF8 ("Gate para guitarra: ignora el zumbido y cierra los agudos (el soplido) "
+                                                          "antes que el cuerpo de la nota, as\xc3\xad no se escapa el hiss en las colas"));
+
     guitarButton.setTooltip ("Pitch para guitarra: la menor latencia");
     bassButton.setTooltip ("Pitch para bajo: notas graves estables (algo mas de latencia)");
 
@@ -313,6 +337,11 @@ void Sidebar::resized()
         auto a = gateCard.reduced (14, 8);
         auto top = a.removeFromTop (28);
         gatePower.setBounds (top.removeFromRight (30));
+        top.removeFromRight (10);
+        const int switchWidth = std::min (172, top.getWidth() - 60);
+        auto switchRow = top.removeFromRight (switchWidth).withSizeKeepingCentre (switchWidth, 26);
+        classicGateButton.setBounds (switchRow.removeFromLeft (switchRow.getWidth() / 2));
+        advancedGateButton.setBounds (switchRow);
         a.removeFromBottom (44);   // caption + value pill, painted in paint()
         const int w = a.getWidth() / 2;
         const int knob = std::min (a.getHeight(), w - 30);

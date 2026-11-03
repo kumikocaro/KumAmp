@@ -14,6 +14,7 @@
 #include "Core/RealtimePitchTracker.h"
 #include "DSP/Midi/GuitarToMidi.h"
 #include "DSP/Pitch/GuitarSynthBlock.h"
+#include "DSP/Pitch/PolyNoteDetector.h"
 #include "DSP/Dynamics/DynamicsBlocks.h"
 #include "DSP/Modulation/ModulationBlocks.h"
 #include "DSP/Pitch/PreFxBlocks.h"
@@ -959,6 +960,335 @@ void testGuitarSynth()
     }
 }
 
+void testGuitarSynthTexture()
+{
+    std::puts ("guitar synth (textura: pluck layer, stereo)");
+    BlockRig rig (BlockType::GuitarSynth);
+    rig.set (GuitarSynthBlock::Mode, 2.0f);
+    rig.set (GuitarSynthBlock::DecayMs, 200.0f);
+    rig.block->prepare (kRate, kBlock);
+
+    // Two picks of a chord-like tone that rings for the whole second.
+    std::vector<float> l ((size_t) kRate, 0.0f);
+    for (double pick : { 0.1, 0.6 })
+        for (double hz : { 110.0, 164.8, 220.0 })
+            for (size_t i = (size_t) (pick * kRate); i < l.size(); ++i)
+            {
+                const double t = (double) i / kRate - pick;
+                l[i] += (float) (0.15 * std::exp (-t / 1.5) * std::sin (2.0 * 3.141592653589793 * hz * t));
+            }
+    auto r = l;
+    rig.run (l, r);
+    bool finite = true;
+    for (float x : l) finite = finite && std::isfinite (x);
+    const double attack = rmsDb (l, (size_t) (0.12 * kRate), (size_t) (0.22 * kRate));
+    const double tail   = rmsDb (l, (size_t) (0.45 * kRate), (size_t) (0.58 * kRate));
+    const double second = rmsDb (l, (size_t) (0.62 * kRate), (size_t) (0.72 * kRate));
+    double diff = 0.0;
+    for (size_t i = 0; i < l.size(); ++i) diff += std::abs (l[i] - r[i]);
+    std::printf ("  pluck %.1f dB -> tail %.1f dB, second pick %.1f dB, L/R difference %.3f\n", attack, tail, second, diff / (double) l.size());
+    CHECK (finite);
+    CHECK (attack > tail + 8.0);    // each pick decays like a pluck...
+    CHECK (second > tail + 8.0);    // ...and the next pick fires it again
+    CHECK (diff / (double) l.size() > 1.0e-3);   // stereo width
+}
+
+/** Plucked-string chord: 12 stretched harmonics per note, random phases, decaying. */
+void addPluckedChord (std::vector<float>& x, double start, std::initializer_list<int> notes, float amplitude = 0.04f)
+{
+    std::mt19937 rng (3);
+    std::uniform_real_distribution<double> phase (0.0, 6.283185307179586);
+    for (const int n : notes)
+    {
+        const double f = 440.0 * std::pow (2.0, (n - 69) / 12.0);
+        for (int h = 1; h <= 12; ++h)
+        {
+            const double fh = f * h * std::sqrt (1.0 + 0.0001 * h * h), ph = phase (rng);
+            const double a = amplitude * (h == 1 ? 0.6 : 1.0) / std::pow (h, 1.1), tau = 1.5 / (1.0 + 0.4 * h);
+            for (size_t i = (size_t) (start * kRate); i < x.size(); ++i)
+            {
+                const double t = (double) i / kRate - start;
+                x[i] += (float) (a * std::exp (-t / tau) * std::sin (2.0 * 3.141592653589793 * fh * t + ph));
+            }
+        }
+    }
+}
+
+void testPolyNoteDetector()
+{
+    std::puts ("poly note detector: chords from a single guitar signal");
+    struct Case { std::initializer_list<int> notes; std::initializer_list<int> mustHave; };
+    const Case cases[] {
+        { { 45 }, { 45 } },                              // A2
+        { { 64 }, { 64 } },                              // E4
+        { { 48, 52, 55, 60, 64 }, { 48, 52, 55 } },      // C major (open)
+        { { 40, 47, 52, 56, 59, 64 }, { 40, 47, 56 } },  // E major (open): octaves fold into the root
+        { { 50, 57, 62, 66 }, { 50, 57, 66 } },          // D major
+    };
+    for (const auto& c : cases)
+    {
+        PolyNoteDetector detector;
+        detector.prepare (kRate);
+        std::vector<float> x ((size_t) kRate, 0.0f);
+        addPluckedChord (x, 0.0, c.notes);
+
+        std::array<bool, 12> classes {};
+        for (const int n : c.notes) classes[(size_t) (n % 12)] = true;
+        double first = -1.0;
+        bool onlyChordTones = true;
+        PolyNoteDetector::NoteSet at500;
+        detector.process (x.data(), (int) x.size(), [&] (int offset, const PolyNoteDetector::NoteSet& set)
+        {
+            const double t = offset / kRate;
+            if (set.count > 0 && first < 0.0) first = t;
+            for (int i = 0; i < set.count; ++i)
+                onlyChordTones = onlyChordTones && classes[(size_t) (set.notes[(size_t) i] % 12)];
+            if (t < 0.5) at500 = set;
+        });
+        std::string found;
+        for (int i = 0; i < at500.count; ++i) found += " " + std::to_string (at500.notes[(size_t) i]);
+        std::printf ("  %zu notes -> first after %.0f ms, at 0.5 s:%s\n", c.notes.size(), first * 1000.0, found.c_str());
+        CHECK (first > 0.0 && first < 0.1);
+        CHECK (onlyChordTones);   // never a note outside the chord, not even during the pick
+        for (const int n : c.mustHave)
+            CHECK (std::find (at500.notes.begin(), at500.notes.begin() + at500.count, (std::uint8_t) n) != at500.notes.begin() + at500.count);
+    }
+}
+
+void testInstrumentSynth()
+{
+    std::puts ("guitar synth (instrumento: bank levels, re-pick, chord change, sequencer)");
+    using GS = GuitarSynthBlock;
+    auto makeRig = [] (int sound)
+    {
+        BlockRig rig (BlockType::GuitarSynth);
+        rig.set (GS::Mode, (float) GS::Voice::Instrument);
+        rig.set (GS::Sound, (float) sound);
+        rig.set (GS::Mix, 100.0f);
+        rig.block->prepare (kRate, kBlock);
+        return rig;
+    };
+
+    // Every sound: finite and level-matched on the same chord.
+    for (int sound = 0; sound < InstrumentSynth::kNumSounds; ++sound)
+    {
+        auto rig = makeRig (sound);
+        std::vector<float> l ((size_t) kRate, 0.0f);
+        addPluckedChord (l, 0.0, { 48, 52, 55, 60, 64 });
+        auto r = l;
+        rig.run (l, r);
+        bool finite = true;
+        float peak = 0.0f;
+        for (size_t i = 0; i < l.size(); ++i)
+        {
+            finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]);
+            peak = std::max ({ peak, std::abs (l[i]), std::abs (r[i]) });
+        }
+        const double level = 0.5 * (rmsDb (l, (size_t) (0.1 * kRate), (size_t) (0.9 * kRate)) + rmsDb (r, (size_t) (0.1 * kRate), (size_t) (0.9 * kRate)));
+        std::printf ("  %-15s %6.1f dB rms, peak %5.1f dB\n", InstrumentSynth::soundName (sound), level, 20.0 * std::log10 (peak + 1e-9));
+        CHECK (finite);
+        CHECK (level > -27.0 && level < -16.0);
+        CHECK (peak < 0.7f);
+    }
+
+    // Piano: a second pick of the same ringing chord strikes it again.
+    {
+        auto rig = makeRig (0);
+        std::vector<float> l ((size_t) (2.0 * kRate), 0.0f);
+        addPluckedChord (l, 0.1, { 48, 52, 55 });
+        addPluckedChord (l, 1.2, { 48, 52, 55 });
+        auto r = l;
+        rig.run (l, r);
+        const double before = rmsDb (l, (size_t) (1.05 * kRate), (size_t) (1.2 * kRate));
+        const double after  = rmsDb (l, (size_t) (1.25 * kRate), (size_t) (1.4 * kRate));
+        std::printf ("  piano re-pick: %.1f dB -> %.1f dB\n", before, after);
+        CHECK (after > before + 4.0);
+    }
+
+    // Chord change: C major, then G major; the held notes follow.
+    {
+        auto rig = makeRig (5);
+        std::vector<float> l ((size_t) (2.0 * kRate), 0.0f);
+        addPluckedChord (l, 0.1, { 48, 52, 55 }, 0.03f);
+        addPluckedChord (l, 1.0, { 43, 47, 50, 55 }, 0.06f);
+        auto r = l;
+        std::string atC, atG;
+        for (size_t off = 0; off < l.size(); off += kBlock)
+        {
+            rig.block->process (l.data() + off, r.data() + off, (int) std::min<size_t> (kBlock, l.size() - off));
+            const auto chips = rig.block->getInfoChips();
+            if (off == (size_t) (0.8 * kRate) / kBlock * kBlock && chips.size() > 1) atC = chips[1];
+            if (off == (size_t) (1.8 * kRate) / kBlock * kBlock && chips.size() > 1) atG = chips[1];
+        }
+        std::printf ("  held: \"%s\" then \"%s\"\n", atC.c_str(), atG.c_str());
+        CHECK (atC.find ("C3") != std::string::npos && atC.find ("E3") != std::string::npos);
+        CHECK (atG.find ("G2") != std::string::npos && atG.find ("B2") != std::string::npos);
+        CHECK (atG.find ("C3") == std::string::npos && atG.find ("E3") == std::string::npos);
+    }
+
+    // Sequencer: arpeggio at 1/16 of 120 BPM = a note every 125 ms.
+    {
+        auto rig = makeRig (2);   // drawbar organ: notes start and stop with the gate
+        rig.set (GS::Sequence, 1.0f);
+        rig.set (GS::SeqRate, 3.0f);
+        rig.set (GS::SeqGate, 50.0f);
+        std::vector<float> l ((size_t) (2.0 * kRate), 0.0f);
+        addPluckedChord (l, 0.1, { 48, 52, 55 });
+        auto r = l;
+        rig.run (l, r);
+        // Note starts: the 5 ms frame energy crossing a threshold upwards.
+        const size_t frame = (size_t) (0.005 * kRate);
+        std::vector<double> starts;
+        bool on = false;
+        for (size_t f = 0; (f + 1) * frame < l.size(); ++f)
+        {
+            const double db = rmsDb (l, f * frame, (f + 1) * frame);
+            if (! on && db > -40.0) { starts.push_back ((double) (f * frame) / kRate); on = true; }
+            if (on && db < -50.0) on = false;
+        }
+        double meanInterval = 0.0, worst = 0.0;
+        for (size_t i = 1; i < starts.size(); ++i)
+            meanInterval += starts[i] - starts[i - 1];
+        meanInterval /= std::max<size_t> (1, starts.size() - 1);
+        for (size_t i = 1; i < starts.size(); ++i)
+            worst = std::max (worst, std::abs (starts[i] - starts[i - 1] - 0.125));
+        std::printf ("  arpeggio: %zu notes, first at %.0f ms, every %.1f ms (worst deviation %.1f ms)\n",
+                     starts.size(), starts.empty() ? 0.0 : starts[0] * 1000.0, meanInterval * 1000.0, worst * 1000.0);
+        CHECK (starts.size() >= 10);
+        CHECK (std::abs (meanInterval - 0.125) < 0.003);
+        CHECK (worst < 0.011);
+    }
+
+    // Single-note mode follows the pitch tracker.
+    {
+        auto rig = makeRig (14);
+        rig.set (GS::Notes, 1.0f);
+        std::vector<float> l ((size_t) kRate, 0.0f);
+        addPluckedChord (l, 0.05, { 57 }, 0.1f);   // A3
+        auto r = l;
+        std::string held;
+        for (size_t off = 0; off < l.size(); off += kBlock)
+        {
+            rig.block->process (l.data() + off, r.data() + off, (int) std::min<size_t> (kBlock, l.size() - off));
+            const auto chips = rig.block->getInfoChips();
+            if (off == (size_t) (0.5 * kRate) / kBlock * kBlock && chips.size() > 1) held = chips[1];
+        }
+        std::printf ("  single note: \"%s\"\n", held.c_str());
+        CHECK (held == "A3");
+    }
+}
+
+void testAdvancedGate()
+{
+    std::puts ("noise gate: advanced (multiband) vs classic on a ringing note with hiss");
+    // A note whose fundamental rings while its highs die fast, over constant hiss.
+    std::vector<float> input ((size_t) (2.2 * kRate), 0.0f);
+    std::mt19937 rng (7);
+    std::normal_distribution<float> noise (0.0f, 0.0008f);   // ~-62 dBFS hiss
+    for (size_t i = 0; i < input.size(); ++i)
+    {
+        input[i] = noise (rng);
+        const double t = (double) i / kRate - 0.1;
+        if (t >= 0.0)
+        {
+            input[i] += (float) (0.3 * std::exp (-t / 1.2) * std::sin (2.0 * 3.141592653589793 * 110.0 * t));
+            for (double hz : { 2200.0, 3300.0, 4400.0 })
+                input[i] += (float) (0.04 * std::exp (-t / 0.12) * std::sin (2.0 * 3.141592653589793 * hz * t));
+        }
+    }
+    auto band = [] (std::vector<float> x, bool high)
+    {
+        std::array<Biquad, 2> f;
+        for (auto& b : f) high ? b.setHighPass (kRate, 5000.0f) : b.setLowPass (kRate, 400.0f);
+        for (auto& v : x) v = f[1].process (f[0].process (v));
+        return x;
+    };
+    auto runGate = [&] (float mode)
+    {
+        BlockRig rig (BlockType::NoiseGate);
+        rig.set (NoiseGateBlock::ThresholdDb, -48.0f);
+        rig.set (NoiseGateBlock::Mode, mode);
+        auto l = input, r = input;
+        rig.run (l, r);
+        return l;
+    };
+    const auto classic = runGate (0.0f), advanced = runGate (1.0f);
+    const size_t from = (size_t) (1.0 * kRate), to = (size_t) (2.0 * kRate);   // the ringing tail
+    const double hissClassic = rmsDb (band (classic, true), from, to), hissAdvanced = rmsDb (band (advanced, true), from, to);
+    const double bodyClassic = rmsDb (band (classic, false), from, to), bodyAdvanced = rmsDb (band (advanced, false), from, to);
+    std::printf ("  tail hiss >5 kHz: classic %.1f dB, advanced %.1f dB   body <400 Hz: %.1f / %.1f dB\n",
+                 hissClassic, hissAdvanced, bodyClassic, bodyAdvanced);
+    CHECK (hissAdvanced < hissClassic - 15.0);
+    CHECK (std::abs (bodyAdvanced - bodyClassic) < 1.0);
+
+    // Hiss alone: closed in both modes.
+    std::vector<float> hiss ((size_t) (0.5 * kRate));
+    for (auto& v : hiss) v = noise (rng);
+    for (float mode : { 0.0f, 1.0f })
+    {
+        BlockRig rig (BlockType::NoiseGate);
+        rig.set (NoiseGateBlock::ThresholdDb, -48.0f);
+        rig.set (NoiseGateBlock::Mode, mode);
+        auto l = hiss, r = hiss;
+        rig.run (l, r);
+        CHECK (rmsDb (l, l.size() / 2, l.size()) < -120.0);
+    }
+
+    // Loud, bright signal: the advanced split sums back exactly (transparent while open).
+    {
+        BlockRig rig (BlockType::NoiseGate);
+        rig.set (NoiseGateBlock::Mode, 1.0f);
+        auto l = sine (110.0, 0.5, 0.3f);
+        const auto bright = sine (3300.0, 0.5, 0.2f);
+        for (size_t i = 0; i < l.size(); ++i) l[i] += bright[i];
+        const auto ref = l;
+        auto r = l;
+        rig.run (l, r);
+        double err = 0.0;
+        for (size_t i = l.size() / 2; i < l.size(); ++i) err = std::max (err, (double) std::abs (l[i] - ref[i]));
+        std::printf ("  open advanced gate: max error %.2e\n", err);
+        CHECK (err < 1.0e-4);
+    }
+}
+
+void testEqListen()
+{
+    std::puts ("parametric EQ: band listen (FabFilter style)");
+    using EQ = ParametricEqBlock;
+    BlockRig rig (BlockType::ParametricEq);
+    auto* eq = dynamic_cast<EQ*> (rig.block);
+    rig.set (EQ::bandParam (2, EQ::BandOn), 1.0f);
+    rig.set (EQ::bandParam (2, EQ::BandFreq), 1000.0f);
+    rig.set (EQ::bandParam (2, EQ::BandGain), 6.0f);
+    rig.set (EQ::bandParam (2, EQ::BandQ), 4.0f);
+    rig.block->prepare (kRate, kBlock);
+    auto gainAt = [&] (double hz)
+    {
+        auto l = sine (hz, 0.5), r = l;
+        rig.run (l, r);
+        return rmsDb (l, 12000, 24000) - rmsDb (sine (hz, 0.5), 12000, 24000);
+    };
+    const double normal150 = gainAt (150.0);
+    eq->setListenBand (2);
+    const double centre = gainAt (1000.0), off = gainAt (150.0);
+    eq->setListenBand (-1);
+    const double back = gainAt (150.0);
+    std::printf ("  bell 1 kHz listen: %.1f dB at 1 kHz, %.1f dB at 150 Hz; off again: %.2f dB (was %.2f)\n", centre, off, back, normal150);
+    CHECK (std::abs (centre) < 1.0);   // the band region at unity (its boost is not applied)
+    CHECK (off < -20.0);
+    CHECK (std::abs (back - normal150) < 0.2);
+
+    // Low cut: listening plays what it removes (below the corner).
+    rig.set (EQ::bandParam (2, EQ::BandType), (float) EqBandType::LowCut);
+    rig.set (EQ::bandParam (2, EQ::BandFreq), 300.0f);
+    eq->setListenBand (2);
+    const double below = gainAt (80.0), above = gainAt (3000.0);
+    eq->setListenBand (-1);
+    std::printf ("  low cut 300 Hz listen: %.1f dB at 80 Hz, %.1f dB at 3 kHz\n", below, above);
+    CHECK (below > -2.0);
+    CHECK (above < -40.0);
+}
+
 void testPitchBlockUnityIsTransparent()
 {
     std::puts ("pitch block unity");
@@ -985,6 +1315,11 @@ int main()
     testRealtimeTracker();
     testGuitarToMidi();
     testGuitarSynth();
+    testGuitarSynthTexture();
+    testPolyNoteDetector();
+    testInstrumentSynth();
+    testAdvancedGate();
+    testEqListen();
     testAllBlocksStress();
     testBlockBehaviour();
     testRateBridge (44100.0);

@@ -17,11 +17,21 @@ namespace kumamp
     ("Off|On", "Lento|Rapido"...); the value is the 0-based index. */
 
 //==============================================================================
-/** Noise gate with hysteresis and hold, stereo-linked, smooth gain ramps. */
+/**
+    Noise gate with hysteresis and hold, stereo-linked, smooth gain ramps.
+
+    Clásico: one full-band detector and gain.
+    Avanzado (guitar): the hiss a classic gate lets through lives in the highs,
+    which stay open as long as the note's fundamental rings. Here the detector
+    ignores hum (100 Hz key high-pass) and the signal is split (complementary,
+    so it sums back exactly) at "Corte": the lows follow the main gate, while
+    the highs also need their own level above threshold + "Agudos" and close
+    faster. The note keeps its body while the hiss over the decay is removed.
+*/
 class NoiseGateBlock final : public DSPBlock
 {
 public:
-    enum Param { ThresholdDb, HysteresisDb, AttackMs, HoldMs, ReleaseMs, RangeDb, NumParams };
+    enum Param { ThresholdDb, HysteresisDb, AttackMs, HoldMs, ReleaseMs, RangeDb, Mode, HighDb, SplitHz, NumParams };
     explicit NoiseGateBlock (StoreId id);
     float getGainDb() const noexcept { return meterGainDb.load (std::memory_order_relaxed); }
 
@@ -31,10 +41,15 @@ protected:
     void processBlock (float*, float*, int) noexcept override;
 
 private:
-    EnvelopeFollower detector;
-    float gain = 1.0f;
-    int holdCounter = 0;
-    bool open = false;
+    void processAdvanced (float* left, float* right, int numSamples) noexcept;
+
+    EnvelopeFollower detector, highDetector;
+    float gain = 1.0f, highGain = 1.0f;
+    int holdCounter = 0, highHoldCounter = 0;
+    bool open = false, highOpen = false;
+    std::array<Biquad, 2> keyHighPass, splitLowPass;
+    std::array<std::array<Biquad, 2>, 2> highKey;   // [channel][stage]: steep high-pass for the highs detector
+    float lastSplitHz = -1.0f;
     std::atomic<float> meterGainDb { 0.0f };
 };
 
@@ -81,6 +96,13 @@ public:
     const SampleRing<8192>& getPreAnalyser() const noexcept  { return preTap; }
     const SampleRing<8192>& getPostAnalyser() const noexcept { return postTap; }
 
+    /** Band listen (FabFilter style): -1 = off, otherwise only the region the band
+        acts on is heard (bell / notch / band pass: a band pass at its frequency and Q;
+        low shelf / low cut: what lies below it; high shelf / high cut: what lies above).
+        Live UI state, not a parameter: it is never saved. Any thread. */
+    void setListenBand (int band) noexcept { listenBand.store (band >= 0 && band < kNumBands ? band : -1, std::memory_order_relaxed); }
+    int getListenBand() const noexcept { return listenBand.load (std::memory_order_relaxed); }
+
 protected:
     void prepareBlock (double, int) override;
     void resetBlock() noexcept override;
@@ -96,7 +118,14 @@ private:
         int numStages = 0;
     };
     std::array<BandState, kNumBands> bands;
-    std::vector<float> monoScratch;
+    void updateListenFilter (int band) noexcept;
+
+    std::vector<float> monoScratch, dryLeft, dryRight;
+    std::atomic<int> listenBand { -1 };
+    int listenFilterBand = -1;
+    EqBandType listenType = EqBandType::Bell;
+    std::array<std::array<Biquad, 2>, 2> listenFilters;   // [channel][stage]
+    LinearSmoother listenMix;
     LinearSmoother output;
     std::atomic<bool> analyserEnabled { false };
     SampleRing<8192> preTap, postTap;

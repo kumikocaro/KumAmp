@@ -48,7 +48,11 @@ bool injectModel (juce::AudioPluginInstance& plugin, const char* type, const juc
         }
         else
         {
+            // Scenes may switch blocks back on (the cab), so also drop their files
+            // (the default cab IR): an empty IR loader is transparent.
             store.setProperty ("bypass", true, nullptr);
+            store.removeProperty ("file_0", nullptr);
+            store.removeProperty ("file_1", nullptr);
         }
     }
     if (! found)
@@ -65,9 +69,11 @@ bool injectModel (juce::AudioPluginInstance& plugin, const char* type, const juc
     return true;
 }
 
-/** Mean |output - input| over one block of a 110 Hz sine. */
+/** Mean |output - input| over one block of a 110 Hz sine, with the input
+    delayed by the latency the plugin reports (what a host compensates). */
 double processAndDiff (juce::AudioPluginInstance& plugin, double& phase)
 {
+    const int latency = plugin.getLatencySamples();
     juce::AudioBuffer<float> buffer (2, kBlock);
     juce::MidiBuffer midi;
     std::vector<float> input (kBlock);
@@ -80,9 +86,12 @@ double processAndDiff (juce::AudioPluginInstance& plugin, double& phase)
     }
     plugin.processBlock (buffer, midi);
 
+    // The sine is analytic, so the delayed input is just the same sine shifted back.
+    const double step = 2.0 * juce::MathConstants<double>::pi * 110.0 / kRate;
+    const double start = phase - kBlock * step;
     double diff = 0.0;
     for (int i = 0; i < kBlock; ++i)
-        diff += std::abs (buffer.getSample (0, i) - input[(size_t) i]);
+        diff += std::abs (buffer.getSample (0, i) - 0.3f * (float) std::sin (start + (i - latency) * step));
     return diff / kBlock;
 }
 

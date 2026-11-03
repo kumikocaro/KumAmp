@@ -12,6 +12,7 @@ namespace
     const juce::String kGateOnId        { "gate_on" };
     const juce::String kGateThresholdId { "gate_threshold" };
     const juce::String kGateReleaseId   { "gate_release" };
+    const juce::String kGateModeId      { "gate_mode" };
     const juce::String kPitchOnId       { "pitch_on" };
     const juce::String kPitchSemisId    { "pitch_semitones" };
     const juce::String kPitchInstrId    { "pitch_instrument" };
@@ -72,6 +73,7 @@ KumAmpAudioProcessor::KumAmpAudioProcessor()
     gateOn         = parameters.getRawParameterValue (kGateOnId);
     gateThreshold  = parameters.getRawParameterValue (kGateThresholdId);
     gateRelease    = parameters.getRawParameterValue (kGateReleaseId);
+    gateMode       = parameters.getRawParameterValue (kGateModeId);
     pitchOn        = parameters.getRawParameterValue (kPitchOnId);
     pitchSemitones = parameters.getRawParameterValue (kPitchSemisId);
     pitchInstrument = parameters.getRawParameterValue (kPitchInstrId);
@@ -120,6 +122,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout KumAmpAudioProcessor::create
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { kGateReleaseId, 1 }, "Gate Release",
                                                        NormalisableRange<float> { 5.0f, 1000.0f, 1.0f, 0.4f }, 120.0f,
                                                        AudioParameterFloatAttributes().withLabel ("ms")));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { kGateModeId, 1 }, "Gate Mode",
+                                                        StringArray { juce::CharPointer_UTF8 ("Cl\xc3\xa1sico"), "Avanzado" }, 0));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { kPitchOnId, 1 }, "Pitch", false));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { kPitchSemisId, 1 }, "Pitch Semitones",
                                                        NormalisableRange<float> { -12.0f, 12.0f, 1.0f }, 0.0f,
@@ -316,6 +320,7 @@ void KumAmpAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     inputGate.setBypassed (gateOn->load (std::memory_order_relaxed) < 0.5f);
     inputGate.setParam (kumamp::NoiseGateBlock::ThresholdDb, gateThreshold->load (std::memory_order_relaxed));
     inputGate.setParam (kumamp::NoiseGateBlock::ReleaseMs, gateRelease->load (std::memory_order_relaxed));
+    inputGate.setParam (kumamp::NoiseGateBlock::Mode, gateMode->load (std::memory_order_relaxed));
     processChunked (inputGate, left, right, numSamples, maxBlock);
 
     globalPitch.setBypassed (pitchOn->load (std::memory_order_relaxed) < 0.5f);

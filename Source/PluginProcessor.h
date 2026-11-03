@@ -100,6 +100,7 @@ private:
     std::atomic<float>* gateOn = nullptr;
     std::atomic<float>* gateThreshold = nullptr;
     std::atomic<float>* gateRelease = nullptr;
+    std::atomic<float>* gateMode = nullptr;
     std::atomic<float>* pitchOn = nullptr;
     std::atomic<float>* pitchSemitones = nullptr;
     std::atomic<float>* pitchInstrument = nullptr;
