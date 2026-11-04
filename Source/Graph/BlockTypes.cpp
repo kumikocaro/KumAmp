@@ -19,6 +19,7 @@ namespace
         { BlockType::GuitarSynth,     "guitar_synth",     "Guitar Synth",     C::Experimental },
         { BlockType::Sitar,           "sitar",            "Sitar",            C::Experimental },
         { BlockType::Charango,        "charango",         "Charango",         C::Experimental },
+        { BlockType::Sampler,         "sampler",          "Sampler",          C::Experimental },
         { BlockType::Overdrive,       "overdrive",        "Overdrive",        C::Drive },
         { BlockType::NamAmp,          "nam_amp",          "NAM Amp",          C::Amp },
         { BlockType::IrLoader,        "ir_loader",        "IR Loader",        C::Cab },

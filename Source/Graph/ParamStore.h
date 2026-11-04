@@ -52,6 +52,8 @@ public:
     void  setBypassed (bool shouldBeBypassed) noexcept { bypassed.store (shouldBeBypassed, std::memory_order_relaxed); }
     bool  isBypassed() const noexcept                  { return bypassed.load (std::memory_order_relaxed); }
     void  resetToDefaults() noexcept;
+    /** False: the parameter describes the block itself, so scenes leave it alone. Any thread. */
+    virtual bool isSceneParam (int /*index*/) const noexcept { return true; }
 
     // Message thread only (not touched by DSP).
     void setName (std::string newName) { name = std::move (newName); }

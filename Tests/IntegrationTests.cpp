@@ -7,6 +7,9 @@
 #include "DSP/Cab/IrLoaderBlock.h"
 #include "DSP/Drive/OverdriveBlock.h"
 #include "DSP/Pitch/GuitarSynthBlock.h"
+#include "DSP/Pitch/SamplerBlock.h"
+#include "DSP/JuceBlocks.h"
+#include "Graph/BlockFactory.h"
 #include "Engine/GridEngine.h"
 #include "Presets/PresetManager.h"
 #include "Tone3000/Tone3000.h"
@@ -378,7 +381,7 @@ void testOverdrive()
     od.setParam (OverdriveBlock::Model, 0.0f);
     od.setParam (OverdriveBlock::Drive, 0.0f);
     od.reset();
-    std::vector<float> l (kBlock, 0.0f), r (kBlock, 0.0f);
+    std::vector<float> l (256, 0.0f), r (256, 0.0f);
     l[0] = r[0] = 0.02f;
     od.process (l.data(), r.data(), kBlock);
     int peak = 0;
@@ -769,6 +772,232 @@ void testDefaultPresetDryEffects()
     CHECK (synthSnapshots == 4);
 }
 
+namespace sampler_test
+{
+constexpr double kRate = 48000.0;
+constexpr int kBlock = 256;
+size_t seconds (double s) { return (size_t) (s * kRate); }
+
+struct BlockRig
+{
+    std::shared_ptr<ParamStore> store;
+    DSPBlock* block = nullptr;
+    explicit BlockRig (BlockType type)
+    {
+        store = createStore (type, 1);
+        block = dynamic_cast<DSPBlock*> (store.get());
+        block->prepare (kRate, kBlock);
+    }
+    void set (int param, float value) { store->setParam (param, value); }
+    void run (std::vector<float>& l, std::vector<float>& r)
+    {
+        for (size_t off = 0; off < l.size(); off += kBlock)
+        {
+            const int n = (int) std::min<size_t> (kBlock, l.size() - off);
+            block->process (l.data() + off, r.data() + off, n);
+            block->collectGarbage();
+        }
+    }
+};
+
+std::vector<float> sine (double hz, double length, float amplitude = 0.5f)
+{
+    std::vector<float> x (seconds (length));
+    for (size_t i = 0; i < x.size(); ++i)
+        x[i] = amplitude * (float) std::sin (2.0 * 3.141592653589793 * hz * (double) i / kRate);
+    return x;
+}
+
+float peakOf (const std::vector<float>& x, size_t from, size_t to)
+{
+    float peak = 0.0f;
+    for (size_t i = from; i < to; ++i)
+        peak = std::max (peak, std::abs (x[i]));
+    return peak;
+}
+
+double toneLevelDb (const std::vector<float>& x, size_t from, size_t to, double hz)
+{
+    double re = 0.0, im = 0.0;
+    const double n = (double) (to - from);
+    for (size_t i = from; i < to; ++i)
+    {
+        const double w = 0.5 - 0.5 * std::cos (2.0 * 3.141592653589793 * (double) (i - from) / n);
+        const double phase = 2.0 * 3.141592653589793 * hz * (double) i / kRate;
+        re += w * x[i] * std::cos (phase);
+        im += w * x[i] * std::sin (phase);
+    }
+    return 20.0 * std::log10 (4.0 * std::sqrt (re * re + im * im) / n + 1e-12);
+}
+} // namespace sampler_test
+
+void testSampler()
+{
+    std::puts ("sampler (load, base note, follows the guitar, trim, play modes, scenes)");
+    using S = SamplerBlock;
+    using namespace sampler_test;
+    registerJuceBlocks();
+
+    // A sound on disk: 0.5 s of silence, then 0.5 s of A3.
+    const auto file = juce::File::createTempFile (".wav");
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (file.createOutputStream().release(), sampler_test::kRate, 1, 24, {}, 0));
+        std::vector<float> samples ((size_t) seconds (0.5), 0.0f);
+        const auto tone = sine (220.0, 0.5, 0.25f);
+        samples.insert (samples.end(), tone.begin(), tone.end());
+        const float* channels[] { samples.data() };
+        CHECK (writer->writeFromFloatArrays (channels, 1, (int) samples.size()));
+    }
+
+    const auto waitForSound = [] (BlockRig& rig, S& sampler)
+    {
+        for (int i = 0; i < 2000 && sampler.getSound() == nullptr; ++i)
+            juce::Thread::sleep (2);
+        std::vector<float> l (256, 0.0f), r (256, 0.0f);
+        rig.run (l, r);   // the audio thread takes it
+    };
+
+    // Nothing loaded: the guitar goes through untouched.
+    {
+        BlockRig rig (BlockType::Sampler);
+        auto l = sine (165.0, 0.1), r = l;
+        const auto dry = l;
+        rig.run (l, r);
+        CHECK (l == dry);
+    }
+
+    BlockRig rig (BlockType::Sampler);
+    auto* sampler = dynamic_cast<S*> (rig.block);
+    CHECK (sampler->loadFile (0, file.getFullPathName().toStdString()));
+    waitForSound (rig, *sampler);
+    const auto sound = sampler->getSound();
+    CHECK (sound != nullptr);
+    CHECK (std::abs (sound->seconds() - 1.0) < 0.001);
+
+    // "Quitar silencio" finds the tone, and the base note comes from it.
+    sampler->trimSilence();
+    CHECK (std::abs (rig.block->getParam (S::Start) - 50.0f) < 0.5f);
+    CHECK (rig.block->getParam (S::End) > 99.0f);
+    for (int i = 0; i < 2000 && sampler->getDetectedRoot() < 0.0f; ++i)
+        juce::Thread::sleep (2);
+    CHECK (std::abs (sampler->getDetectedRoot() - 57.0f) < 0.2f);
+    CHECK (sampler->getRootText() == "A3");
+
+    // E3 on the guitar plays the A3 sound at E3.
+    {
+        auto l = sine (164.81, 0.4), r = l;
+        rig.run (l, r);
+        const double played = toneLevelDb (l, seconds (0.1), seconds (0.3), 164.81);
+        const double original = toneLevelDb (l, seconds (0.1), seconds (0.3), 220.0);
+        CHECK (played > -30.0);
+        CHECK (played > original + 15.0);
+    }
+
+    // Sostener: it stops with the note, well before the sound ends.
+    {
+        std::vector<float> l ((size_t) seconds (0.4), 0.0f), r = l;
+        rig.block->setParam (S::ReleaseMs, 20.0f);
+        rig.run (l, r);
+        CHECK (peakOf (l, seconds (0.3), seconds (0.4)) < 1.0e-3f);
+    }
+
+    // Una vez plays on after the note, up to the end of the trim, and then stops.
+    {
+        BlockRig once (BlockType::Sampler);
+        auto* block = dynamic_cast<S*> (once.block);
+        once.set (S::Playback, (float) S::Play::Once);
+        once.set (S::Start, 50.0f);
+        block->loadFile (0, file.getFullPathName().toStdString());
+        waitForSound (once, *block);
+        for (int i = 0; i < 2000 && block->getDetectedRoot() < 0.0f; ++i)
+            juce::Thread::sleep (2);
+
+        auto l = sine (220.0, 0.1);
+        l.resize ((size_t) seconds (1.2), 0.0f);
+        auto r = l;
+        once.run (l, r);
+        CHECK (peakOf (l, seconds (0.3), seconds (0.45)) > 0.1f);    // the guitar has stopped: still the sound
+        CHECK (peakOf (l, seconds (0.8), seconds (1.2)) < 1.0e-3f);  // 0.5 s of sound, done
+    }
+
+    // Loop keeps going past the end of the sound, as long as the note rings.
+    {
+        BlockRig loop (BlockType::Sampler);
+        auto* block = dynamic_cast<S*> (loop.block);
+        loop.set (S::Playback, (float) S::Play::Loop);
+        loop.set (S::Start, 50.0f);
+        block->loadFile (0, file.getFullPathName().toStdString());
+        waitForSound (loop, *block);
+        for (int i = 0; i < 2000 && block->getDetectedRoot() < 0.0f; ++i)
+            juce::Thread::sleep (2);
+
+        auto l = sine (220.0, 2.0), r = l;
+        loop.run (l, r);
+        CHECK (peakOf (l, seconds (1.5), seconds (1.95)) > 0.1f);
+        CHECK (toneLevelDb (l, seconds (1.0), seconds (1.9), 220.0) > -30.0);
+    }
+
+    // Chords: one voice per note.
+    {
+        BlockRig chords (BlockType::Sampler);
+        auto* block = dynamic_cast<S*> (chords.block);
+        chords.set (S::Notes, 1.0f);
+        chords.set (S::Start, 50.0f);
+        block->loadFile (0, file.getFullPathName().toStdString());
+        waitForSound (chords, *block);
+        for (int i = 0; i < 2000 && block->getDetectedRoot() < 0.0f; ++i)
+            juce::Thread::sleep (2);
+
+        auto l = sine (196.0, 0.5, 0.25f);
+        const auto second = sine (293.66, 0.5, 0.25f);
+        for (size_t i = 0; i < l.size(); ++i)
+            l[i] += second[i];
+        auto r = l;
+        chords.run (l, r);
+        CHECK (toneLevelDb (l, seconds (0.2), seconds (0.45), 196.0) > -35.0);
+        CHECK (toneLevelDb (l, seconds (0.2), seconds (0.45), 293.66) > -35.0);
+    }
+
+    // A guitar too quiet for the detectors: silent until the sensitivity goes up.
+    {
+        const auto weak = [&] (float gain)
+        {
+            std::atomic<float> detection { gain };
+            rig.block->reset();
+            rig.block->setDetectionSource (&detection);
+            auto l = sine (164.81, 0.4, 0.0008f), r = l;
+            rig.run (l, r);
+            rig.block->setDetectionSource (nullptr);
+            return peakOf (l, seconds (0.1), seconds (0.35));
+        };
+        CHECK (weak (1.0f) < 1.0e-3f);
+        CHECK (weak (16.0f) > 0.02f);
+    }
+
+    // Nothing allocates on the audio path while voices play.
+    {
+        auto l = sine (164.81, 0.5), r = l;
+        gAudioAllocations = 0;
+        gTrackAllocations = true;
+        rig.run (l, r);
+        gTrackAllocations = false;
+        CHECK (gAudioAllocations.load() == 0);
+    }
+
+    // The trim belongs to the sound, not to the scene.
+    CHECK (! rig.block->isSceneParam (S::Start));
+    CHECK (! rig.block->isSceneParam (S::RootNote));
+    CHECK (rig.block->isSceneParam (S::Mix));
+
+    // Another sound resets the trim.
+    rig.block->setParam (S::Start, 30.0f);
+    sampler->loadFile (0, file.getFullPathName().toStdString() + "x");
+    CHECK (exactlyEqual (rig.block->getParam (S::Start), 0.0f));
+
+    file.deleteFile();
+}
+
 void testReplaceBlock()
 {
     std::puts ("replace block (Chorus -> Phaser in place, scenes, undo)");
@@ -1045,6 +1274,7 @@ int main()
     testGridEditing();
     testDefaultPresetDryEffects();
     testReplaceBlock();
+    testSampler();
     testPresets();
     testTone3000Helpers();
     testTone3000Network();

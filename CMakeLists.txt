@@ -18,7 +18,7 @@ endif()
 # Windows: runtime de MSVC estatico -> el usuario no necesita instalar el VC++ Redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(KumAmp VERSION 0.1.7 LANGUAGES C CXX)
+project(KumAmp VERSION 0.1.8 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -164,6 +164,7 @@ set(KUMAMP_JUCE_SOURCES
     Source/DSP/Amp/NamProfileInfo.cpp
     Source/DSP/Cab/IrLoaderBlock.cpp
     Source/DSP/Drive/OverdriveBlock.cpp
+    Source/DSP/Pitch/SamplerBlock.cpp
     Source/Tuner/Tuner.cpp
     Source/Presets/PresetManager.cpp
     Source/Tone3000/Tone3000.cpp
@@ -176,6 +177,7 @@ set(KUMAMP_UI_SOURCES
     Source/UI/GridView.cpp
     Source/UI/BlockPanel.cpp
     Source/UI/EqView.cpp
+    Source/UI/SampleEditorView.cpp
     Source/UI/SettingsView.cpp
     Source/UI/PresetBrowser.cpp
     Source/UI/Tone3000Picker.cpp)

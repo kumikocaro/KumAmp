@@ -135,6 +135,8 @@ public:
     /** Host tempo for synced delays / LFOs (audio thread writes, anyone reads). */
     void setTempo (double bpm) noexcept { if (bpm > 1.0) tempoBpm.store (bpm, std::memory_order_relaxed); }
     double getTempo() const noexcept    { return tempoBpm.load (std::memory_order_relaxed); }
+    /** What every block's note detectors hear, as a linear gain. */
+    void setDetectionGain (float gain) noexcept { detectionGain.store (gain, std::memory_order_relaxed); }
 
 private:
     struct UndoEntry
@@ -176,6 +178,7 @@ private:
     std::atomic<int> requestedScene { 0 }, activeScene { 0 };
     std::atomic<int> latency { 0 };
     std::atomic<double> tempoBpm { 120.0 };
+    std::atomic<float> detectionGain { 1.0f };
 
     // Audio-thread state ----------------------------------------------------------
     enum class Fade { Running, FadingOut, Muted, FadingIn };

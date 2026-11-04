@@ -9,7 +9,7 @@
 
 namespace kumamp
 {
-/** SETTINGS tab: guitar -> MIDI output and MIDI control input. */
+/** SETTINGS tab: note detection, guitar -> MIDI output and MIDI control input. */
 class SettingsView final : public juce::Component, private juce::Timer
 {
 public:
@@ -21,6 +21,8 @@ public:
     std::function<float()> bendSource;
     /** MIDI control input: last message (status << 16 | data1 << 8 | data2, 0 = none) and count. */
     std::function<juce::uint32()> midiInSource, midiInCountSource;
+    /** What the note detectors hear since the last call (peak, linear). */
+    std::function<float()> detectionPeakSource;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -33,6 +35,7 @@ private:
     using ComboAttachment  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
 
+    juce::Slider sensitivity { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::ToggleButton midiOut { "Enviar MIDI desde la guitarra" };
     juce::ComboBox channel, bendRange;
     juce::Slider threshold { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
@@ -42,9 +45,11 @@ private:
 
     std::unique_ptr<ButtonAttachment> midiOutAttachment, pcAttachment, ccAttachment;
     std::unique_ptr<ComboAttachment> channelAttachment, bendAttachment;
-    std::unique_ptr<SliderAttachment> thresholdAttachment, transposeAttachment;
+    std::unique_ptr<SliderAttachment> thresholdAttachment, transposeAttachment, sensitivityAttachment;
 
-    juce::Rectangle<int> outCard, controlCard, activityArea, helpArea, midiInArea;
+    juce::Rectangle<int> detectCard, detectLevelArea, outCard, controlCard, activityArea, helpArea, midiInArea;
+    float detectionDb = -100.0f, detectionHoldDb = -100.0f;
+    int detectionHoldFrames = 0;
     juce::uint32 lastMidiIn = 0, midiInCount = 0;
     double lastMidiInTime = 0.0;
     int note = -1, velocity = 0;

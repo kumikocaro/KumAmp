@@ -211,6 +211,7 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
     chips.clear();
     eqView.reset();
     tone3000Button.reset();
+    editSampleButton.reset();
     tone3000Credit.reset();
     variants.reset();
     variantModels.clear();
@@ -311,6 +312,15 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
             addAndMakeVisible (*fs.browse);
             fileSlots.push_back (std::move (fs));
             populateFileSlot (slot);
+        }
+
+        if (store->getType() == BlockType::Sampler)
+        {
+            editSampleButton = std::make_unique<juce::TextButton> ("Editar");
+            editSampleButton->setTooltip ("Recortar el sonido y elegir su nota base");
+            editSampleButton->setColour (juce::TextButton::buttonColourId, theme::accent.withAlpha (0.35f));
+            editSampleButton->onClick = [this] { if (onEditSample && store != nullptr) onEditSample (store); };
+            addAndMakeVisible (*editSampleButton);
         }
 
         if (store->getType() == BlockType::NamAmp)
@@ -494,7 +504,12 @@ void BlockPanel::refresh()
     {
         for (int slot = 0; slot < (int) fileSlots.size(); ++slot)
             if (fileSlots[(size_t) slot].shownPath != block->getFilePath (slot) && ! fileSlots[(size_t) slot].files->isPopupActive())
+            {
                 populateFileSlot (slot);
+                // A new sound: straight to trimming it.
+                if (editSampleButton != nullptr && onEditSample)
+                    onEditSample (store);
+            }
 
         const auto newChips = block->getInfoChips();
         const auto status = juce::String (block->getStatusText());
@@ -607,6 +622,11 @@ void BlockPanel::resized()
         if (tone3000Button != nullptr && &fs == &fileSlots.front())
         {
             tone3000Button->setBounds (row.removeFromRight (104).reduced (0, 4));
+            row.removeFromRight (6);
+        }
+        if (editSampleButton != nullptr)
+        {
+            editSampleButton->setBounds (row.removeFromRight (84).reduced (0, 4));
             row.removeFromRight (6);
         }
         fs.browse->setBounds (row.removeFromRight (48).reduced (2));

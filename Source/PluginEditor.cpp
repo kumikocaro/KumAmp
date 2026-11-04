@@ -72,6 +72,7 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     panel.onRemove = [this] { grid.removeSelected(); };
     panel.onChangeType = [this] (kumamp::BlockType type) { grid.replaceSelected (type); };
     panel.onExpandEq = [this] (std::shared_ptr<kumamp::ParamStore> eqStore) { showEqOverlay (std::move (eqStore)); };
+    panel.onEditSample = [this] (std::shared_ptr<kumamp::ParamStore> samplerStore) { showSampleOverlay (std::move (samplerStore)); };
     panel.onBrowseTone3000 = [this] (std::shared_ptr<kumamp::ParamStore> ampStore, juce::Component& source)
     {
         browseTone3000 (std::move (ampStore), source);
@@ -91,6 +92,7 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     content.addChildComponent (tunerView);
     content.addChildComponent (placeholder);
     settings.noteSource     = [this] { return kumProcessor.getMidiOutNote(); };
+    settings.detectionPeakSource = [this] { return kumProcessor.takeDetectionPeak(); };
     settings.midiInSource   = [this] { return kumProcessor.getLastMidiIn(); };
     settings.midiInCountSource = [this] { return kumProcessor.getMidiInCount(); };
     settings.velocitySource = [this] { return kumProcessor.getMidiOutVelocity(); };
@@ -155,6 +157,20 @@ void KumAmpAudioProcessorEditor::showEqOverlay (std::shared_ptr<kumamp::ParamSto
     eqOverlay->setBounds (centreColumn);
     content.addAndMakeVisible (*eqOverlay);
     eqOverlay->toFront (false);
+}
+
+void KumAmpAudioProcessorEditor::showSampleOverlay (std::shared_ptr<kumamp::ParamStore> samplerStore)
+{
+    sampleOverlay = std::make_unique<kumamp::SampleEditorView> (std::move (samplerStore));
+    sampleOverlay->onClose = [this]
+    {
+        // Deferred: don't delete the view from inside its own button callback.
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<KumAmpAudioProcessorEditor> (this)]
+                                         { if (safe != nullptr) safe->sampleOverlay.reset(); });
+    };
+    sampleOverlay->setBounds (centreColumn);
+    content.addAndMakeVisible (*sampleOverlay);
+    sampleOverlay->toFront (false);
 }
 
 void KumAmpAudioProcessorEditor::showTab (int tab)
@@ -425,6 +441,8 @@ void KumAmpAudioProcessorEditor::timerCallback()
     if (eqOverlay != nullptr)
         if (const auto selected = engine.getStore (panel.getStoreId()); selected == nullptr || selected->getType() != kumamp::BlockType::ParametricEq)
             eqOverlay.reset();
+    if (sampleOverlay != nullptr && sampleOverlay->getStoreId() != panel.getStoreId())
+        sampleOverlay.reset();
 
     panel.refresh();
     grid.repaint();
@@ -547,6 +565,8 @@ void KumAmpAudioProcessorEditor::layoutContent()
     tunerView.setBounds (centre);
     if (eqOverlay != nullptr)
         eqOverlay->setBounds (centre);
+    if (sampleOverlay != nullptr)
+        sampleOverlay->setBounds (centre);
     placeholder.setBounds (centre);
     settings.setBounds (centre);
     presetBrowser.setBounds (centre);

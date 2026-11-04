@@ -32,8 +32,16 @@ public:
     /** MIDI notes of the strings; a change keeps every phase (no click). */
     void setNotes (const std::array<int, kStrings>& notes) noexcept;
 
+    /** How much it moves besides the resonance sweep. All at 0 (and texture 0): a perfectly still drone. */
+    struct Motion
+    {
+        float detuneCents = 3.0f;   // between the two Sa strings; the partials spread with it
+        float breath = 0.12f;       // level swell, 0..1
+        float drift = 1.0f;         // irregularity of the sweep, 0..1
+    };
+
     /** Writes the drone (stereo). texture 0..1, movementSeconds: one sweep of the resonance. */
-    void process (float* left, float* right, int numSamples, float texture, float movementSeconds) noexcept;
+    void process (float* left, float* right, int numSamples, float texture, float movementSeconds, const Motion& motion) noexcept;
 
 private:
     static constexpr int kControlInterval = 64;
@@ -43,17 +51,18 @@ private:
         float hz = 110.0f;
         int count = 0;
         std::array<float, kPartials> re {}, im {}, rotRe {}, rotIm {}, amp {}, step {}, base {}, detune {};
-        double sweepPhase = 0.0, breathPhase = 0.0;
+        double sweepPhase = 0.0, breathPhase = 0.0, driftPhase = 0.0;
         float level = 1.0f, panLeft = 0.7071f, panRight = 0.7071f;
     };
 
     void tune (Voice& v, int note, float cents) noexcept;
-    void control (int index, float texture, float movementSeconds) noexcept;
+    void control (int index, float texture, float movementSeconds, const Motion& motion) noexcept;
     float nextRandom() noexcept;
 
     std::array<Voice, kStrings> voices;
     std::array<int, kStrings> currentNotes { -1, -1, -1, -1 };
     double sampleRate = 48000.0;
+    float currentDetune = 3.0f;
     int countdown = 0;
     std::uint32_t randomState = 0x6d2b79f5u;
 };

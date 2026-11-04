@@ -66,6 +66,14 @@ public:
         return bpm > 1.0 ? bpm : 120.0;
     }
 
+    //== Note detection sensitivity (shared by the engine; any thread) =============
+    /** Linear gain on what this block's note detectors hear, never on its sound. */
+    void setDetectionSource (const std::atomic<float>* gain) noexcept { detectionSource = gain; }
+    float getDetectionGain() const noexcept
+    {
+        return detectionSource != nullptr ? detectionSource->load (std::memory_order_relaxed) : 1.0f;
+    }
+
     /** Message thread: delete objects retired by the audio thread. */
     virtual void collectGarbage() {}
 
@@ -88,6 +96,7 @@ protected:
 
 private:
     const std::atomic<double>* tempoSource = nullptr;
+    const std::atomic<float>* detectionSource = nullptr;
     std::vector<float> dryLeft, dryRight;
     FixedDelay dryDelay;
     double currentSampleRate = 48000.0;

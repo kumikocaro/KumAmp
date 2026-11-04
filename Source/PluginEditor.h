@@ -6,6 +6,7 @@
 #include "UI/GridView.h"
 #include "UI/KumAmpLookAndFeel.h"
 #include "UI/PresetBrowser.h"
+#include "UI/SampleEditorView.h"
 #include "UI/Tone3000Picker.h"
 #include "UI/SettingsView.h"
 #include "UI/TunerView.h"
@@ -70,6 +71,7 @@ private:
     static float fittingScale (float wanted);
     void showTuner (bool shouldShow);
     void showEqOverlay (std::shared_ptr<kumamp::ParamStore> eqStore);
+    void showSampleOverlay (std::shared_ptr<kumamp::ParamStore> samplerStore);
     void showTab (int tab);
     void showToast (const juce::String& message);
     void showMainMenu (juce::Component& source);
@@ -98,6 +100,7 @@ private:
     kumamp::BlockPanel panel;
     kumamp::TunerView tunerView;
     std::unique_ptr<kumamp::EqView> eqOverlay;   // large graphic EQ over the centre column
+    std::unique_ptr<kumamp::SampleEditorView> sampleOverlay;   // the Sampler's sound, same place
     Placeholder placeholder;
     kumamp::SettingsView settings;
     kumamp::PresetBrowser presetBrowser;

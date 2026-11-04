@@ -253,8 +253,10 @@ void GuitarSynthBlock::processBlock (float* left, float* right, int numSamples) 
     mix.setTarget (getParam (Mix) * 0.01f);
     level.setTarget (dbToGain (getParam (LevelDb)));
 
+    // Everything the synth does starts from this copy: the dry guitar is not touched.
+    const float detection = getDetectionGain();
     for (int i = 0; i < numSamples; ++i)
-        mono[(size_t) i] = 0.5f * (left[i] + right[i]);
+        mono[(size_t) i] = 0.5f * (left[i] + right[i]) * detection;
 
     const auto voice = (Voice) std::clamp ((int) std::lround (getParam (Mode)), 0, 3);
     if (voice == Voice::Instrument)

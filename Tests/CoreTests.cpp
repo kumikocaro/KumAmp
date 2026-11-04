@@ -16,6 +16,7 @@
 #include "DSP/Pitch/CharangoBlock.h"
 #include "DSP/Pitch/GuitarSynthBlock.h"
 #include "DSP/Pitch/SitarBlock.h"
+#include "DSP/Pitch/TanpuraDrone.h"
 #include "DSP/Pitch/PolyNoteDetector.h"
 #include "DSP/Dynamics/DynamicsBlocks.h"
 #include "DSP/Modulation/ModulationBlocks.h"
@@ -1473,6 +1474,113 @@ void testSitarModelled()
     CHECK (std::lround (rig.block->getParam (S::Mode)) == 1);
 }
 
+void testDetectionSensitivity()
+{
+    std::puts ("note detection sensitivity (a weak guitar is picked up; the dry sound is untouched)");
+    const auto seconds = [] (double s) { return (size_t) (s * kRate); };
+
+    // A very quiet guitar: below every detector's gate.
+    const auto outputPeak = [&] (BlockType type, int modeParam, float mode, int mixParam, float gain, bool plain)
+    {
+        std::atomic<float> detection { gain };
+        BlockRig rig (type);
+        rig.block->setDetectionSource (&detection);
+        if (modeParam >= 0)
+            rig.set (modeParam, mode);
+        rig.set (mixParam, plain ? 0.0f : 100.0f);
+        auto l = sine (196.0, 1.0, 0.0008f);
+        auto r = l;
+        rig.run (l, r);
+        float peak = 0.0f;
+        for (size_t i = seconds (0.3); i < seconds (0.9); ++i)
+            peak = std::max (peak, std::abs (l[i]));
+        return peak;
+    };
+
+    constexpr float kOff = 1.0f, kOn = 16.0f;   // +24 dB
+    using G = GuitarSynthBlock;
+    using C = CharangoBlock;
+    using S = SitarBlock;
+
+    // Guitar Synth, mono voice: silent without it, plays with it.
+    CHECK (outputPeak (BlockType::GuitarSynth, G::Mode, (float) G::Voice::Mono, G::Mix, kOn, false)
+           > 8.0f * outputPeak (BlockType::GuitarSynth, G::Mode, (float) G::Voice::Mono, G::Mix, kOff, false));
+    CHECK (outputPeak (BlockType::GuitarSynth, G::Mode, (float) G::Voice::Instrument, G::Mix, kOn, false)
+           > 8.0f * outputPeak (BlockType::GuitarSynth, G::Mode, (float) G::Voice::Instrument, G::Mix, kOff, false));
+    CHECK (outputPeak (BlockType::Charango, C::Mode, (float) C::Engine::Modelled, C::Mix, kOn, false)
+           > 8.0f * outputPeak (BlockType::Charango, C::Mode, (float) C::Engine::Modelled, C::Mix, kOff, false));
+
+    // Sitar Modelado: the string only plucks when it hears the note.
+    {
+        const auto sitarPeak = [&] (float gain)
+        {
+            std::atomic<float> detection { gain };
+            BlockRig rig (BlockType::Sitar);
+            rig.block->setDetectionSource (&detection);
+            rig.set (S::Dry, 0.0f);
+            rig.set (S::Sympathetic, 0.0f);
+            auto l = sine (196.0, 1.0, 0.0008f);
+            auto r = l;
+            rig.run (l, r);
+            float peak = 0.0f;
+            for (size_t i = seconds (0.3); i < seconds (0.9); ++i)
+                peak = std::max (peak, std::abs (l[i]));
+            return peak;
+        };
+        CHECK (sitarPeak (kOn) > 8.0f * sitarPeak (kOff));
+    }
+
+    // It is only what the detectors hear: at 0 % mix the guitar comes out as it went in.
+    CHECK_NEAR (outputPeak (BlockType::GuitarSynth, G::Mode, (float) G::Voice::Mono, G::Mix, kOn, true), 0.0008f, 1.0e-4f);
+}
+
+void testTanpura()
+{
+    std::puts ("tanpura (smooth motion, steady when asked to)");
+    const auto seconds = [] (double s) { return (size_t) (s * kRate); };
+
+    // Only string 0 sounds in the analysed band: the others are far above it.
+    const auto render = [&] (float texture, float movement, const TanpuraDrone::Motion& motion)
+    {
+        TanpuraDrone drone;
+        drone.prepare (kRate);
+        drone.setNotes ({ 45, 100, 100, 100 });
+        std::vector<float> l (seconds (24.0)), r (l.size());
+        for (size_t off = 0; off < l.size(); off += kBlock)
+            drone.process (l.data() + off, r.data() + off, (int) std::min<size_t> (kBlock, l.size() - off), texture, movement, motion);
+        return l;
+    };
+
+    // The largest jump of any harmonic between frames 10 ms apart, in dB.
+    const auto largestJump = [&] (const std::vector<float>& x)
+    {
+        const auto frame = seconds (0.04), hop = seconds (0.01);
+        double largest = 0.0;
+        for (int h = 2; h <= 16; ++h)
+        {
+            double last = 0.0;
+            bool first = true;
+            for (size_t at = seconds (0.5); at + frame < x.size(); at += hop)
+            {
+                const double level = toneLevelDb (x, at, at + frame, 110.0 * h);
+                if (! first)
+                    largest = std::max (largest, std::abs (level - last));
+                last = level;
+                first = false;
+            }
+        }
+        return largest;
+    };
+
+    const double moving = largestJump (render (1.0f, 2.0f, {}));
+    std::printf ("  largest jump %.2f dB\n", moving);
+    CHECK (moving < 2.5);
+
+    // Everything off: it does not move at all.
+    const double still = largestJump (render (0.0f, 2.0f, { 0.0f, 0.0f, 0.0f }));
+    CHECK (still < 0.05);
+}
+
 void testCharango()
 {
     std::puts ("charango (fold voicing, processed octave, modelled strum, level)");
@@ -1700,6 +1808,8 @@ int main()
     testSitar();
     testSitarModelled();
     testCharango();
+    testTanpura();
+    testDetectionSensitivity();
     testAdvancedGate();
     testEqListen();
     testAllBlocksStress();

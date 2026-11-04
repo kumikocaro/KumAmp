@@ -77,6 +77,8 @@ public:
         0 = none yet) and how many have arrived. */
     juce::uint32 getLastMidiIn() const noexcept   { return lastMidiIn.load (std::memory_order_relaxed); }
     juce::uint32 getMidiInCount() const noexcept  { return midiInCount.load (std::memory_order_relaxed); }
+    /** What the note detectors hear since the last call: the input peak with the sensitivity (linear). */
+    float takeDetectionPeak() noexcept;
 
     /** While the big tuner view is open the output can be muted ("tuner_mute"). */
     void setTunerViewOpen (bool open) noexcept { tunerViewOpen.store (open, std::memory_order_relaxed); }
@@ -104,6 +106,7 @@ private:
     std::atomic<float>* tunerMute = nullptr;
     std::atomic<float>* gateOn = nullptr;
     std::atomic<float>* gateThreshold = nullptr;
+    std::atomic<float>* detectSensitivity = nullptr;
     std::atomic<float>* gateRelease = nullptr;
     std::atomic<float>* gateMode = nullptr;
     std::atomic<float>* pitchOn = nullptr;
@@ -137,6 +140,7 @@ private:
 
     juce::AudioProcessLoadMeasurer loadMeasurer;
     std::array<std::atomic<float>, 2> inputPeaks {}, outputPeaks {};
+    std::atomic<float> detectionPeak { 0.0f };
     std::atomic<int> lastBlockSize { 0 };
     std::atomic<juce::uint32> lastProcessTime { 0 };
     std::atomic<bool> tunerViewOpen { false };

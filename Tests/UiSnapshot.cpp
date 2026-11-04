@@ -3,6 +3,9 @@
 
 #include "DSP/Pitch/PitchShifterBlock.h"
 #include "DSP/Pitch/CharangoBlock.h"
+#include "DSP/Pitch/SamplerBlock.h"
+#include "UI/SampleEditorView.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 #include "DSP/Pitch/GuitarSynthBlock.h"
 #include "DSP/Pitch/SitarBlock.h"
 #include "PluginEditor.h"
@@ -264,6 +267,45 @@ int main()
             pump (300);
             allOk = save (type == kumamp::BlockType::Sitar ? "editor_sitar.png" : "editor_charango.png") && allOk;
         }
+    // Sampler: panel and sound editor, with a sound in a temporary file.
+    if (const auto* amp = engine.getModel().findNode (ampNode))
+    {
+        const auto soundFile = juce::File::createTempFile (".wav");
+        {
+            juce::WavAudioFormat wavFormat;
+            std::unique_ptr<juce::AudioFormatWriter> writer (wavFormat.createWriterFor (soundFile.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+            juce::AudioBuffer<float> tone (1, 72000);
+            for (int i = 0; i < tone.getNumSamples(); ++i)
+            {
+                const float t = (float) (i - 12000) / 48000.0f;
+                tone.setSample (0, i, t < 0.0f ? 0.0f : std::exp (-3.0f * t) * std::sin (juce::MathConstants<float>::twoPi * 220.0f * t));
+            }
+            writer->writeFromAudioSampleBuffer (tone, 0, tone.getNumSamples());
+        }
+        const auto node = engine.insertBlock (amp->inputs[0], amp->id, kumamp::BlockType::Sampler, false);
+        pump (100);
+        for (auto* child : sections())
+            if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
+                gridView->selectNode (node);
+        pump (200);
+        allOk = save ("editor_sampler_panel.png") && allOk;
+        if (const auto* inserted = engine.getModel().findNode (node))
+            if (auto store = engine.getStore (inserted->store))
+                if (auto* block = dynamic_cast<kumamp::SamplerBlock*> (store.get()))
+                {
+                    block->loadFile (0, soundFile.getFullPathName().toStdString());
+                    pump (1200);   // decoded, and the panel opens the editor
+                    store->setParam (kumamp::SamplerBlock::Start, 15.0f);
+                    store->setParam (kumamp::SamplerBlock::End, 80.0f);
+                    pump (200);
+                    allOk = save ("editor_sampler.png") && allOk;
+                    for (auto* child : sections())
+                        if (auto* overlay = dynamic_cast<kumamp::SampleEditorView*> (child))
+                            overlay->onClose();
+                    pump (60);
+                }
+        soundFile.deleteFile();
+    }
     if (auto* param = processor.getParameters().getParameter ("gate_mode"))
         param->setValueNotifyingHost (0.0f);
 

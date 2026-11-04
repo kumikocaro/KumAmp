@@ -179,6 +179,10 @@ El EQ paramétrico tiene 8 bandas: Bell, Low/High Shelf, Low/High Cut (12, 24, 3
   - **Ajustes de la secuencia:** Ritmo (1/4 a 1/32, con tresillos), Duración de cada nota, Octavas del arpegio (1 a 3) y Swing.
 - El panel muestra solo los controles del modo elegido. En Instrumento, los chips indican el sonido y las notas que está leyendo.
 
+### Sensibilidad de detección
+
+En SETTINGS, **Detección de notas** ajusta lo que escuchan los detectores de nota de Guitar Synth, Sitar, Charango, Sampler y Guitarra → MIDI, de -12 a +24 dB. Es para que agarren una guitarra de poca salida (o dejen de dispararse con una muy caliente): no cambia el volumen de la guitarra, aunque en el Guitar Synth, que se arma a partir de la señal, sí cambia cuánto entra al sintetizador. Debajo, un medidor muestra el nivel mientras tocás y dice si alcanza. Los detectores empiezan a -55 dB.
+
 ### Sitar
 
 Convierte la guitarra en un lead de sitar con un anillo de cuerdas simpáticas. Tiene dos modos:
@@ -189,6 +193,7 @@ Convierte la guitarra en un lead de sitar con un anillo de cuerdas simpáticas. 
 - **Cuerdas simpáticas:** 12 cuerdas de guía de onda afinadas a una Tonalidad y una Escala (Bilawal, Khamaj, Kafi, Asavari, Bhairav, Yaman, Todi, Bhupali, Sa-Pa), excitadas por la guitarra. Solo resuenan cuando lo que tocás comparte sus notas, como en un sitar. **Congelar** sostiene el drone que está sonando.
 - **Tampura:** un drone sostenido de fondo para ambientar. Cuatro cuerdas (la primera en Pa, Ma o Ni, dos en Sa y el Sa grave) suenan sin parar, cada una como un banco de armónicos. El brillo del puente del tampura se mueve despacio por sus armónicos, cada cuerda a su ritmo, con una respiración suave del nivel: el drone nunca queda quieto pero siempre está en su nota.
   - **Drone** es su nivel. **Tono tampura** sigue la Tonalidad del sitar o se elige aparte. **Textura** fija cuánto se mueve ese brillo y **Movimiento** su velocidad (2 a 30 s por vuelta).
+  - **Desafinar** es cuánto se separan las dos cuerdas Sa (0 a 10 cents; las hace batir y le da esa fluctuación microtonal). **Respiración** es la subida y bajada lenta del nivel, y **Deriva** lo irregular que es el barrido. Con los tres y Textura en 0 el drone queda totalmente quieto.
   - **Salida tampura:** «Directo» (por defecto) la manda a la salida por fuera de la cadena, sin pasar por el amp ni los efectos que vienen después; «Con la cadena» la suma a la guitarra. Entra y sale con un fundido de 1,5 s, y también hace sonar un poco las cuerdas simpáticas.
 - **Niveles:** Seco, Lead y Simpáticas por separado, con Tono lead y Tono simp para el lead y para las cuerdas, y Cola de las simpáticas.
 
@@ -199,6 +204,18 @@ El charango del norte argentino y los Andes: 10 cuerdas de nylon en 5 órdenes d
 - **Procesado** (baja latencia, ~15 ms): la guitarra una octava arriba (WSOLA polifónico), cada nota doblada como un orden (dos copias apenas desafinadas y retrasadas, abiertas en estéreo), el **Octavado** (la otra octava mezclada), un **Sustain** más corto (el decay se acorta respecto de la púa) y el **Cuerpo** chico (sin graves, resonancias de aire y tapa, agudos brillantes). **Registro** elige entre «+1 octava» y el registro de la guitarra.
 - **Modelado:** el detector polifónico lee el acorde y lo re-voicea como un charango (cada nota se pliega a Mi4–Re#5 y el orden de Mi va en octavas). Lo tocan órdenes dobles de nylon modelados (guías de onda) a través del mismo cuerpo. Cada púa rasguea los órdenes con el **Rasgueo** elegido (0 a 40 ms entre cuerdas) y alterna abajo/arriba cuando las púas vienen rápidas. Es lo más fiel en acordes, con los 40–80 ms del detector.
 - Los chips muestran el temple y, en Modelado, el voicing que está tocando.
+
+### Sampler
+
+Cualquier sonido, cargado de un archivo (WAV, AIFF, FLAC, OGG, MP3, M4A; hasta 60 s), recortado ahí mismo y tocado en el tono de la guitarra. Como en todo sampler, para subir de tono se lee más rápido: la duración y el carácter cambian con la nota (no hay time stretching).
+
+- **Editar** (o cargar un sonido) abre el editor sobre el grid: forma de onda con los bordes del recorte para arrastrar, rueda para hacer zoom, **Escuchar**, **Quitar silencio** y **Zoom al recorte**. También se puede soltar un archivo encima.
+- **Nota base:** en Auto se detecta del recorte (también los cents); un sonido sin tono claro suena como si fuera C4. Se puede fijar a mano y afinar.
+- **Notas:** «Una nota» usa el detector rápido (~10-30 ms desde la púa) y sigue bends y slides, con **Seguimiento** por semitono o libre. «Acordes» dispara una voz por nota con el detector polifónico (suma 40-80 ms).
+- **Disparo:** «Una vez» suena hasta el final del recorte, «Sostener» corta cuando termina la nota, «Loop» repite con **Cruce loop** mientras la nota suena.
+- **Ataque**, **Release**, **Dinámica** (cuánto sigue a la púa), **Octava**, **Mezcla** y **Nivel**.
+
+El preset guarda la ruta del archivo, no el audio: si el archivo se mueve, el bloque avisa que no lo encuentra. El recorte y la nota base son del sonido, así que no cambian con la escena.
 
 ### Noise Gate: Clásico y Avanzado
 
@@ -276,7 +293,7 @@ Los parámetros `tuner_reference`, `tuner_mute` y `tuner_mode` se guardan con el
 |-----------|---------|
 | Entrada | Noise Gate (histéresis, hold, rango; modo Avanzado multibanda) · Afinador global |
 | Pitch / Pre-FX | Pitch Shifter WSOLA · Wah (SVF TPT) · Auto-Wah · Octaver polifónico (-1 y +1 octava, WSOLA) |
-| Experimental | Guitar Synth · Sitar (cuerda modelada o procesado, jawari, cuerdas simpáticas y tampura) · Charango (procesado o modelado) |
+| Experimental | Guitar Synth · Sitar (cuerda modelada o procesado, jawari, cuerdas simpáticas y tampura) · Charango (procesado o modelado) · Sampler (cualquier sonido, recortado y tocado en el tono de la guitarra) |
 | Drive | Overdrive (Tube Screamer TS808 / TS9 / Mod, oversampling 4x) |
 | Amp / Cab | NAM · IR Loader dual con 11 gabinetes KumAmp (55 IR) |
 | Dinámica / EQ | Compresor (detector de pico desacoplado, knee, mezcla en paralelo) · EQ paramétrico (6 etapas) · EQ gráfico de 10 bandas · Transient Shaper |

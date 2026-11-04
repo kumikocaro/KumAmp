@@ -242,6 +242,7 @@ std::shared_ptr<ParamStore> GridEngine::createStore (BlockType type, const juce:
     if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
     {
         block->setTempoSource (&tempoBpm);
+        block->setDetectionSource (&detectionGain);
         if (prepared)
             block->prepare (sampleRate, maxBlock);
     }
@@ -800,6 +801,7 @@ void GridEngine::loadState (const juce::ValueTree& state)
         if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
         {
             block->setTempoSource (&tempoBpm);
+            block->setDetectionSource (&detectionGain);
             for (int f = 0; f < block->getNumFileSlots(); ++f)
                 if (const auto key = "file_" + juce::String (f); s.hasProperty (key))
                     block->loadFile (f, s.getProperty (key).toString().toStdString());

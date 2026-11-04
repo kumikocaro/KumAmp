@@ -10,7 +10,8 @@ namespace
 {
     constexpr float kVoiceLevel[] = { 0.8f, 1.0f, 0.9f, 0.9f };
     constexpr float kVoicePan[]   = { -0.45f, 0.5f, -0.2f, 0.15f };   // -1 left .. 1 right
-    constexpr float kVoiceCents[] = { 0.0f, -1.5f, 1.5f, 0.0f };      // the two Sa strings beat gently
+    constexpr float kVoiceDetune[] = { 0.0f, -0.5f, 0.5f, 0.0f };     // the two Sa strings beat gently
+    constexpr float kPartialSpread = 1.0f / 6.0f;                     // of the detune: slow phasing
     constexpr double kTwoPi = 6.283185307179586;
 } // namespace
 
@@ -41,10 +42,11 @@ void TanpuraDrone::reset() noexcept
             const float phase = (float) kTwoPi * nextRandom();
             v.re[(size_t) h] = std::cos (phase);
             v.im[(size_t) h] = std::sin (phase);
-            v.detune[(size_t) h] = (nextRandom() - 0.5f) * 0.5f;   // +-0.25 cent: slow phasing
+            v.detune[(size_t) h] = nextRandom() - 0.5f;
         }
         v.sweepPhase = nextRandom();
         v.breathPhase = nextRandom();
+        v.driftPhase = nextRandom();
         v.level = kVoiceLevel[i];
         const float angle = 0.25f * kPi * (1.0f + kVoicePan[i]);
         v.panLeft = std::cos (angle);
@@ -79,7 +81,7 @@ void TanpuraDrone::tune (Voice& v, int note, float cents) noexcept
             continue;
         }
         v.base[(size_t) h] *= norm;
-        const double w = kTwoPi * v.hz * (h + 1) * std::exp2 (v.detune[(size_t) h] / 1200.0f) / sampleRate;
+        const double w = kTwoPi * v.hz * (h + 1) * std::exp2 (v.detune[(size_t) h] * currentDetune * kPartialSpread / 1200.0f) / sampleRate;
         v.rotRe[(size_t) h] = (float) std::cos (w);
         v.rotIm[(size_t) h] = (float) std::sin (w);
     }
@@ -91,10 +93,10 @@ void TanpuraDrone::setNotes (const std::array<int, kStrings>& notes) noexcept
         return;
     currentNotes = notes;
     for (size_t i = 0; i < voices.size(); ++i)
-        tune (voices[i], notes[i], kVoiceCents[i]);
+        tune (voices[i], notes[i], kVoiceDetune[i] * currentDetune);
 }
 
-void TanpuraDrone::control (int index, float texture, float movementSeconds) noexcept
+void TanpuraDrone::control (int index, float texture, float movementSeconds, const Motion& motion) noexcept
 {
     auto& v = voices[(size_t) index];
     const double dt = kControlInterval / sampleRate;
@@ -103,14 +105,16 @@ void TanpuraDrone::control (int index, float texture, float movementSeconds) noe
     v.breathPhase += dt / (movementSeconds * 1.9 * (1.0 + 0.11 * index));
     v.sweepPhase -= std::floor (v.sweepPhase);
     v.breathPhase -= std::floor (v.breathPhase);
+    v.driftPhase += 2.7 * dt / (movementSeconds * (1.0 + 0.17 * index));
+    v.driftPhase -= std::floor (v.driftPhase);
 
     // The bridge resonance wanders between the 4th harmonic and the top of the string.
     const float highest = std::max (5.0f, std::min (0.75f * (float) v.count, 24.0f));
     const auto sweep = (float) (0.5 - 0.5 * std::cos (kTwoPi * v.sweepPhase));
-    const auto wobble = (float) std::sin (kTwoPi * (2.7 * v.sweepPhase + 0.3 * index));
-    const float centre = 4.0f + (highest - 4.0f) * sweep + 1.5f * wobble;
+    const auto wobble = (float) std::sin (kTwoPi * v.driftPhase);
+    const float centre = 4.0f + (highest - 4.0f) * sweep + 1.5f * motion.drift * wobble;
     const float width = 1.6f + 1.4f * texture;
-    const float breath = v.level * (1.0f + 0.12f * (float) std::sin (kTwoPi * v.breathPhase));
+    const float breath = v.level * (1.0f + motion.breath * (float) std::sin (kTwoPi * v.breathPhase));
     const float floorLevel = 1.0f - 0.55f * texture, bump = 4.5f * texture;
 
     for (int h = 0; h < v.count; ++h)
@@ -127,17 +131,27 @@ void TanpuraDrone::control (int index, float texture, float movementSeconds) noe
     }
 }
 
-void TanpuraDrone::process (float* left, float* right, int numSamples, float texture, float movementSeconds) noexcept
+void TanpuraDrone::process (float* left, float* right, int numSamples, float texture, float movementSeconds, const Motion& motion) noexcept
 {
     texture = std::clamp (texture, 0.0f, 1.0f);
     movementSeconds = std::max (0.5f, movementSeconds);
+
+    // Retuning keeps every phase, so moving it is silent.
+    if (std::abs (motion.detuneCents - currentDetune) > 1.0e-3f)
+    {
+        currentDetune = motion.detuneCents;
+        for (size_t i = 0; i < voices.size(); ++i)
+            if (currentNotes[i] >= 0)
+                tune (voices[i], currentNotes[i], kVoiceDetune[i] * currentDetune);
+    }
+
     for (int i = 0; i < numSamples; ++i)
     {
         if (--countdown <= 0)
         {
             countdown = kControlInterval;
             for (int v = 0; v < kStrings; ++v)
-                control (v, texture, movementSeconds);
+                control (v, texture, movementSeconds, motion);
         }
 
         float l = 0.0f, r = 0.0f;

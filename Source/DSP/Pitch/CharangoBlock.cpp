@@ -309,10 +309,11 @@ void CharangoBlock::renderModelled (int numSamples) noexcept
     const int refractory = (int) (0.06f * srf);
     const float pickPeakDecay = EnvelopeFollower::coefficient (getSampleRate(), 300.0f);
     const float brightness = std::clamp (0.5f - 0.3f * getParam (Tone) * 0.01f, 0.1f, 0.9f);
+    const float detection = getDetectionGain();
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const float x = mono[(size_t) i];
+        const float x = mono[(size_t) i] * detection;
 
         const float fast = fastEnvelope.process (x), slow = slowEnvelope.process (fast);
         pickPeak = sinceOnset < refractory ? std::max (pickPeak, fast) : pickPeak * pickPeakDecay;

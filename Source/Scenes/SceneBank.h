@@ -51,7 +51,8 @@ struct SceneBank
             if (ParamStore* store = find (snap.id))
             {
                 for (int p = 0; p < snap.numParams && p < store->getNumParams(); ++p)
-                    store->setParam (p, snap.values[(size_t) p]);
+                    if (store->isSceneParam (p))
+                        store->setParam (p, snap.values[(size_t) p]);
                 store->setBypassed (snap.bypassed);
             }
         }

@@ -16,7 +16,7 @@ enum class BlockType : std::uint16_t
     // Pitch & Pre-FX
     PitchShifter, Wah, AutoWah, Octaver,
     // Experimental (instruments played by the guitar)
-    GuitarSynth, Sitar, Charango,
+    GuitarSynth, Sitar, Charango, Sampler,
     // Drive (before the amp)
     Overdrive,
     // Core

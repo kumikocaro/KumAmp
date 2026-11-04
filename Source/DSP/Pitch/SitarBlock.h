@@ -60,7 +60,7 @@ class SitarBlock final : public DSPBlock
 public:
     enum Param { Mode, Dry, Lead, Buzz, LeadTone, Sympathetic, SympTone, Decay, Key, Scale, Bend, Freeze,
                  Tanpura, TanpuraLevel, TanpuraKey, TanpuraString, TanpuraMovement, TanpuraTexture, TanpuraOutput,
-                 NumParams };
+                 TanpuraDetune, TanpuraBreath, TanpuraDrift, NumParams };
     static constexpr int kNumStrings = 12;
     static constexpr const char* kKeyChoices = "C|C#|D|D#|E|F|F#|G|G#|A|A#|B";
     static constexpr const char* kTanpuraKeyChoices = "= Tonalidad|C|C#|D|D#|E|F|F#|G|G#|A|A#|B";

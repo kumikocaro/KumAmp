@@ -15,6 +15,7 @@ Icon iconFor (BlockType type) noexcept
         case BlockType::GuitarSynth:     return Icon::Synth;
         case BlockType::Sitar:
         case BlockType::Charango:        return Icon::Strings;
+        case BlockType::Sampler:         return Icon::Wave;
         case BlockType::NoiseGate:
         case BlockType::Compressor:
         case BlockType::TransientShaper: return Icon::Dynamics;
@@ -47,7 +48,7 @@ const std::vector<PaletteGroup>& paletteGroups()
 {
     static const std::vector<PaletteGroup> groups {
         { "Pitch",      Icon::Pitch,    { BlockType::PitchShifter, BlockType::Wah, BlockType::AutoWah, BlockType::Octaver } },
-        { "Experimental", Icon::Strings, { BlockType::GuitarSynth, BlockType::Sitar, BlockType::Charango } },
+        { "Experimental", Icon::Strings, { BlockType::GuitarSynth, BlockType::Sitar, BlockType::Charango, BlockType::Sampler } },
         { "Dynamics",   Icon::Dynamics, { BlockType::NoiseGate, BlockType::Compressor, BlockType::TransientShaper } },
         { "EQ",         Icon::Eq,       { BlockType::ParametricEq, BlockType::GraphicEq } },
         { "Drive",      Icon::Drive,    { BlockType::Overdrive } },

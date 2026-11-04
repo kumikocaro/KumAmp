@@ -36,7 +36,7 @@ SettingsView::SettingsView (juce::AudioProcessorValueTreeState& parameters)
 
     for (juce::Component* c : { (juce::Component*) &midiOut, (juce::Component*) &channel, (juce::Component*) &bendRange,
                                 (juce::Component*) &threshold, (juce::Component*) &transpose, (juce::Component*) &pcScenes,
-                                (juce::Component*) &ccMacros })
+                                (juce::Component*) &ccMacros, (juce::Component*) &sensitivity })
         addAndMakeVisible (c);
 
     midiOutAttachment   = std::make_unique<ButtonAttachment> (parameters, "midi_out_on", midiOut);
@@ -46,6 +46,12 @@ SettingsView::SettingsView (juce::AudioProcessorValueTreeState& parameters)
     transposeAttachment = std::make_unique<SliderAttachment> (parameters, "midi_out_transpose", transpose);
     pcAttachment        = std::make_unique<ButtonAttachment> (parameters, "midi_pc_scenes", pcScenes);
     ccAttachment        = std::make_unique<ButtonAttachment> (parameters, "midi_cc_macros", ccMacros);
+
+    sensitivityAttachment = std::make_unique<SliderAttachment> (parameters, "detect_sensitivity", sensitivity);
+    sensitivity.textFromValueFunction = [] (double v) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; };
+    sensitivity.setTextBoxStyle (juce::Slider::TextBoxRight, false, 80, 24);
+    sensitivity.setDoubleClickReturnValue (true, 0.0);
+    sensitivity.updateText();
 
     threshold.textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v)) + " dB"; };
     transpose.textFromValueFunction = [] (double v) { return (v > 0 ? "+" : "") + juce::String (juce::roundToInt (v)) + " st"; };
@@ -73,6 +79,20 @@ void SettingsView::timerCallback()
     bend     = bendSource ? bendSource() : 0.0f;
     repaint (activityArea);
 
+    // The level meter falls gently; the verdict holds the last picks for a couple of seconds.
+    const float peakDb = juce::Decibels::gainToDecibels (detectionPeakSource ? detectionPeakSource() : 0.0f, -100.0f);
+    detectionDb = std::max (peakDb, detectionDb - 1.5f);
+    if (peakDb >= detectionHoldDb)
+    {
+        detectionHoldDb = peakDb;
+        detectionHoldFrames = 75;
+    }
+    else if (--detectionHoldFrames <= 0)
+    {
+        detectionHoldDb = std::max (peakDb, detectionHoldDb - 1.0f);
+    }
+    repaint (detectCard);
+
     const auto count = midiInCountSource ? midiInCountSource() : 0u;
     if (count != midiInCount)
         lastMidiInTime = juce::Time::getMillisecondCounterHiRes();
@@ -84,8 +104,40 @@ void SettingsView::timerCallback()
 void SettingsView::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
+    theme::drawCard (g, detectCard.toFloat());
     theme::drawCard (g, outCard.toFloat());
     theme::drawCard (g, controlCard.toFloat());
+
+    drawTitle (g, detectCard.reduced (22, 14), juce::CharPointer_UTF8 ("Detecci\xc3\xb3n de notas"),
+               "Para Guitar Synth, Sitar, Charango, Sampler y MIDI. No cambia el volumen.");
+    drawCaption (g, sensitivity.getBounds().withX (detectCard.getX() + 22).withWidth (110), "Sensibilidad");
+
+    // What the detectors hear while you play. They start at -55 dB; picks want to land in the green.
+    {
+        constexpr float kLowDb = -70.0f, kGateDb = -55.0f, kWeakDb = -35.0f, kHotDb = -6.0f;
+        const auto bar = detectLevelArea.withHeight (14).toFloat();
+        const auto xOf = [&] (float db) { return bar.getX() + bar.getWidth() * juce::jlimit (0.0f, 1.0f, (db - kLowDb) / -kLowDb); };
+        g.setColour (theme::panelRaised);
+        g.fillRoundedRectangle (bar, 4.0f);
+        g.setColour (theme::good.withAlpha (0.18f));
+        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (kWeakDb), bar.getY(), xOf (kHotDb), bar.getBottom()));
+        const auto colour = detectionDb < kGateDb ? theme::bad : detectionDb < kWeakDb ? theme::warn : detectionDb < kHotDb ? theme::good : theme::warn;
+        g.setColour (colour);
+        g.fillRoundedRectangle (bar.withRight (xOf (detectionDb)), 4.0f);
+        g.setColour (theme::text);
+        g.fillRect (xOf (detectionHoldDb) - 1.0f, bar.getY(), 2.0f, bar.getHeight());
+
+        juce::String verdict;
+        if (detectionHoldDb < kLowDb)        verdict = juce::CharPointer_UTF8 ("Toc\xc3\xa1 unas notas para ver el nivel");
+        else if (detectionHoldDb < kGateDb)  verdict = juce::CharPointer_UTF8 ("No llega a detectarse: sub\xc3\xad la sensibilidad");
+        else if (detectionHoldDb < kWeakDb)  verdict = juce::CharPointer_UTF8 ("Se detecta, pero justo: pod\xc3\xa9s subirla un poco");
+        else if (detectionHoldDb < kHotDb)   verdict = juce::CharPointer_UTF8 ("Bien");
+        else                                 verdict = juce::CharPointer_UTF8 ("Muy fuerte: si dispara de m\xc3\xa1s, bajala");
+        g.setColour (theme::textDim);
+        g.setFont (juce::FontOptions (14.0f));
+        g.drawText (verdict + "   (" + juce::String (juce::roundToInt (detectionHoldDb)) + " dB)",
+                    detectLevelArea.withTrimmedTop (16), juce::Justification::centredLeft);
+    }
 
     drawTitle (g, outCard.reduced (22, 16), juce::CharPointer_UTF8 ("Guitarra \xe2\x86\x92 MIDI"),
                "Toca cualquier VST instrumento desde la guitarra (monofonico: una nota a la vez).");
@@ -94,7 +146,7 @@ void SettingsView::paint (juce::Graphics& g)
 
     drawCaption (g, channel.getBounds().withX (outCard.getX() + 22).withWidth (150), "Canal de salida");
     drawCaption (g, bendRange.getBounds().withX (outCard.getX() + 22).withWidth (150), "Pitch bend");
-    drawCaption (g, threshold.getBounds().withX (outCard.getX() + 22).withWidth (150), "Sensibilidad");
+    drawCaption (g, threshold.getBounds().withX (outCard.getX() + 22).withWidth (150), "Umbral");
     drawCaption (g, transpose.getBounds().withX (outCard.getX() + 22).withWidth (150), "Transponer");
 
     // Live activity: note, velocity bar, bend.
@@ -168,18 +220,28 @@ void SettingsView::paint (juce::Graphics& g)
 void SettingsView::resized()
 {
     auto area = getLocalBounds().reduced (4);
-    outCard = area.removeFromTop (area.getHeight() * 64 / 100);
-    area.removeFromTop (14);
-    controlCard = area;
+    auto top = area.removeFromTop (196);
+    area.removeFromTop (10);
+    outCard = area;
+    detectCard = top.removeFromLeft ((top.getWidth() - 10) / 2);
+    top.removeFromLeft (10);
+    controlCard = top;
+    {
+        auto d = detectCard.reduced (22, 14);
+        d.removeFromTop (56);
+        sensitivity.setBounds (d.removeFromTop (32).withTrimmedLeft (110));
+        d.removeFromTop (10);
+        detectLevelArea = d.removeFromTop (40);
+    }
 
     auto o = outCard.reduced (22, 16);
-    o.removeFromTop (58);
+    o.removeFromTop (52);
     midiOut.setBounds (o.removeFromTop (30).withWidth (360));
-    o.removeFromTop (10);
+    o.removeFromTop (6);
 
     auto left = o.removeFromLeft (o.getWidth() / 2);
     auto right = o;
-    auto row = [&left] { auto r = left.removeFromTop (36); left.removeFromTop (8); return r; };
+    auto row = [&left] { auto r = left.removeFromTop (34); left.removeFromTop (6); return r; };
     channel.setBounds (row().withTrimmedLeft (160).withWidth (200));
     bendRange.setBounds (row().withTrimmedLeft (160).withWidth (200));
     threshold.setBounds (row().withTrimmedLeft (160));

@@ -29,6 +29,9 @@ namespace
         { "tanpura_cycle",  "Movimiento",    2.0f,  30.0f, 10.0f, "s",  false },
         { "tanpura_texture","Textura",       0.0f, 100.0f, 60.0f, "%",  false },
         { "tanpura_out",    "Salida tampura", 0.0f,  1.0f,  0.0f, "Directo|Con la cadena", true },
+        { "tanpura_detune", "Desafinar",     0.0f,  10.0f,  3.0f, "cents", false },
+        { "tanpura_breath", "Respiracion",   0.0f,  50.0f, 12.0f, "%",  false },
+        { "tanpura_drift",  "Deriva",        0.0f, 100.0f, 100.0f, "%", false },
     };
     static_assert (std::size (kParams) == SitarBlock::NumParams);
 
@@ -102,6 +105,7 @@ bool SitarBlock::isParamRelevant (int param) const noexcept
     switch (param)
     {
         case TanpuraLevel: case TanpuraKey: case TanpuraString: case TanpuraMovement: case TanpuraTexture: case TanpuraOutput:
+        case TanpuraDetune: case TanpuraBreath: case TanpuraDrift:
             return std::lround (getParam (Tanpura)) != 0;
         default:
             return true;
@@ -362,7 +366,8 @@ void SitarBlock::processBlock (float* left, float* right, int numSamples) noexce
         const int choice = (int) std::lround (getParam (TanpuraKey));
         const int key = choice == 0 ? (int) std::lround (getParam (Key)) : choice - 1;
         drone.setNotes (tanpuraNotes (key, (int) std::lround (getParam (TanpuraString))));
-        drone.process (droneLeft.data(), droneRight.data(), numSamples, getParam (TanpuraTexture) * 0.01f, getParam (TanpuraMovement));
+        drone.process (droneLeft.data(), droneRight.data(), numSamples, getParam (TanpuraTexture) * 0.01f, getParam (TanpuraMovement),
+                       { getParam (TanpuraDetune), getParam (TanpuraBreath) * 0.01f, getParam (TanpuraDrift) * 0.01f });
         for (int i = 0; i < numSamples; ++i)
         {
             const float g = tanpuraGain.next();
@@ -383,6 +388,7 @@ void SitarBlock::processBlock (float* left, float* right, int numSamples) noexce
     const float pickPeakDecay = EnvelopeFollower::coefficient (sr, 300.0f);
     const int minWait = (int) (0.010f * srf), maxWait = (int) (0.060f * srf), silence = (int) (0.2f * srf);
     const float attackDecay = EnvelopeFollower::coefficient (sr, 15.0f);
+    const float detection = getDetectionGain();
     const float slide = EnvelopeFollower::coefficient (sr, 12.0f), jump = EnvelopeFollower::coefficient (sr, 3.0f);
 
     for (int i = 0; i < numSamples; ++i)
@@ -390,7 +396,8 @@ void SitarBlock::processBlock (float* left, float* right, int numSamples) noexce
         const float x = mono[(size_t) i];
         const float droneL = renderDrone ? droneLeft[(size_t) i] : 0.0f, droneR = renderDrone ? droneRight[(size_t) i] : 0.0f;
 
-        tracker.process (&x, 1, [&] (int, const RealtimePitchTracker::Estimate& e)
+        const float heard = x * detection;
+        tracker.process (&heard, 1, [&] (int, const RealtimePitchTracker::Estimate& e)
         {
             if (e.valid && e.fastDb > kGateDb)
             {
@@ -401,7 +408,7 @@ void SitarBlock::processBlock (float* left, float* right, int numSamples) noexce
         });
 
         // A pick restarts the sweep of the bridge "formant" from a high harmonic.
-        const float fast = fastEnvelope.process (x), slow = slowEnvelope.process (fast);
+        const float fast = fastEnvelope.process (heard), slow = slowEnvelope.process (fast);
         pickPeak = sinceOnset < refractory ? std::max (pickPeak, fast) : pickPeak * pickPeakDecay;
         if (++sinceOnset > refractory && fast > gate && fast > 1.5f * std::max (slow, pickPeak) + 1.0e-4f)
         {

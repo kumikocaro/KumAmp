@@ -22,6 +22,7 @@ namespace
     const juce::String kMidiBendId      { "midi_out_bend" };
     const juce::String kMidiTransposeId { "midi_out_transpose" };
     const juce::String kMidiPcId        { "midi_pc_scenes" };
+    const juce::String kDetectSensId    { "detect_sensitivity" };
     const juce::String kMidiCcId        { "midi_cc_macros" };
     constexpr int kBendRanges[] = { 0, 2, 12, 24 };
     constexpr int kSceneCcFirst = 20;   // CC 20-23 -> scenes A-D
@@ -81,6 +82,7 @@ KumAmpAudioProcessor::KumAmpAudioProcessor()
     midiOutOn        = parameters.getRawParameterValue (kMidiOutOnId);
     midiOutChannel   = parameters.getRawParameterValue (kMidiChannelId);
     midiOutThreshold = parameters.getRawParameterValue (kMidiThresholdId);
+    detectSensitivity = parameters.getRawParameterValue (kDetectSensId);
     midiOutBendRange = parameters.getRawParameterValue (kMidiBendId);
     midiOutTranspose = parameters.getRawParameterValue (kMidiTransposeId);
     midiPcScenes     = parameters.getRawParameterValue (kMidiPcId);
@@ -135,6 +137,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout KumAmpAudioProcessor::create
     // MIDI
     StringArray channels;
     for (int c = 1; c <= 16; ++c) channels.add (String (c));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { kDetectSensId, 1 }, "Note Detection Sensitivity",
+                                                       NormalisableRange<float> { -12.0f, 24.0f, 0.5f }, 0.0f, dB));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { kMidiOutOnId, 1 }, "Guitar MIDI Out", false));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { kMidiChannelId, 1 }, "MIDI Out Channel", channels, 0));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { kMidiThresholdId, 1 }, "MIDI Out Threshold",
@@ -277,11 +281,12 @@ void KumAmpAudioProcessor::generateGuitarMidi (const float* left, const float* r
     guitarMidi.setBendRange (kBendRanges[juce::jlimit (0, 3, (int) midiOutBendRange->load (std::memory_order_relaxed))]);
     guitarMidi.setTranspose ((int) midiOutTranspose->load (std::memory_order_relaxed));
 
+    const float detection = juce::Decibels::decibelsToGain (detectSensitivity->load (std::memory_order_relaxed));
     for (int offset = 0; offset < numSamples; offset += maxBlock)
     {
         const int n = std::min (maxBlock, numSamples - offset);
         for (int i = 0; i < n; ++i)
-            midiMono[(size_t) i] = 0.5f * (left[offset + i] + right[offset + i]);
+            midiMono[(size_t) i] = 0.5f * (left[offset + i] + right[offset + i]) * detection;
         guitarMidi.beginBlock();
         midiTracker.process (midiMono.data(), n, [&] (int i, const kumamp::RealtimePitchTracker::Estimate& e)
         {
@@ -295,6 +300,11 @@ void KumAmpAudioProcessor::generateGuitarMidi (const float* left, const float* r
     for (int k = 0; k < guitarMidi.getNumEvents(); ++k)
         if (guitarMidi.getEvent (k).type == kumamp::GuitarToMidi::Event::Type::NoteOn)
             midiOutVelocity.store (guitarMidi.getEvent (k).velocity, std::memory_order_relaxed);
+}
+
+float KumAmpAudioProcessor::takeDetectionPeak() noexcept
+{
+    return detectionPeak.exchange (0.0f) * juce::Decibels::decibelsToGain (detectSensitivity->load (std::memory_order_relaxed));
 }
 
 void KumAmpAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -327,6 +337,9 @@ void KumAmpAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     float* right = buffer.getWritePointer (numOut > 1 ? 1 : 0);
     storePeak (inputPeaks[0], left, numSamples);
     storePeak (inputPeaks[1], right, numSamples);
+    storePeak (detectionPeak, left, numSamples);
+
+    engine.setDetectionGain (juce::Decibels::decibelsToGain (detectSensitivity->load (std::memory_order_relaxed)));
 
     // Guitar -> MIDI from the clean input (before gate / pitch / grid).
     generateGuitarMidi (left, right, numSamples, midiMessages);

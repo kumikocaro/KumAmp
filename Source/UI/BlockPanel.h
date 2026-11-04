@@ -36,6 +36,8 @@ public:
     std::function<void (BlockType)> onChangeType;
     /** Expand button of the graphic EQ: open it large. */
     std::function<void (std::shared_ptr<ParamStore>)> onExpandEq;
+    /** "Editar" of the Sampler, or a new sound loaded: open the sound editor. */
+    std::function<void (std::shared_ptr<ParamStore>)> onEditSample;
     /** "TONE3000" button of the NAM amp block: pick a tone on tone3000.com for this store. */
     std::function<void (std::shared_ptr<ParamStore>, juce::Component& source)> onBrowseTone3000;
     /** A not-yet-downloaded variant of the loaded TONE3000 tone was picked. */
@@ -81,7 +83,7 @@ private:
     std::vector<std::string> chips;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<EqView> eqView;
-    std::unique_ptr<juce::TextButton> tone3000Button;
+    std::unique_ptr<juce::TextButton> tone3000Button, editSampleButton;
     std::unique_ptr<juce::HyperlinkButton> tone3000Credit;
     std::unique_ptr<juce::ComboBox> modelBox;          // the block's family (Chorus, Flanger, Phaser...)
     std::vector<BlockType> modelTypes;
