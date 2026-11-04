@@ -34,9 +34,11 @@ void DSPBlock::process (float* left, float* right, int numSamples) noexcept
     if (numSamples <= 0)
         return;
 
+    directActive = false;
     if (handlesBypassInternally())
     {
         processBlock (left, right, numSamples);
+        directActive = true;
         return;
     }
 
@@ -69,6 +71,7 @@ void DSPBlock::process (float* left, float* right, int numSamples) noexcept
         }
 
         processBlock (left, right, numSamples);
+        directActive = true;
         return;
     }
 
@@ -84,6 +87,9 @@ void DSPBlock::process (float* left, float* right, int numSamples) noexcept
     dryDelay.process (dryLeft.data(), dryRight.data(), numSamples);
 
     processBlock (left, right, numSamples);
+    directActive = true;
+    float* directLeft = directBuffer (0);
+    float* directRight = directBuffer (1);
 
     const float delta = target > bypassMix ? bypassStep : -bypassStep;
     for (int i = 0; i < numSamples; ++i)
@@ -91,6 +97,11 @@ void DSPBlock::process (float* left, float* right, int numSamples) noexcept
         bypassMix = std::clamp (bypassMix + delta, 0.0f, 1.0f);
         left[i]  += (dryLeft[(size_t) i]  - left[i])  * bypassMix;
         right[i] += (dryRight[(size_t) i] - right[i]) * bypassMix;
+        if (directLeft != nullptr && directRight != nullptr)
+        {
+            directLeft[i]  *= 1.0f - bypassMix;
+            directRight[i] *= 1.0f - bypassMix;
+        }
     }
 
     if (std::abs (bypassMix - target) < 1.0e-6f)

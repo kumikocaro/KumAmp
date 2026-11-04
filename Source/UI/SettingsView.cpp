@@ -72,6 +72,13 @@ void SettingsView::timerCallback()
     velocity = velocitySource ? velocitySource() : 0;
     bend     = bendSource ? bendSource() : 0.0f;
     repaint (activityArea);
+
+    const auto count = midiInCountSource ? midiInCountSource() : 0u;
+    if (count != midiInCount)
+        lastMidiInTime = juce::Time::getMillisecondCounterHiRes();
+    midiInCount = count;
+    lastMidiIn = midiInSource ? midiInSource() : 0u;
+    repaint (midiInArea);
 }
 
 void SettingsView::paint (juce::Graphics& g)
@@ -119,6 +126,34 @@ void SettingsView::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (12.0f));
     g.drawText ("bend " + juce::String (bend, 2) + " st", bar.translated (bar.getWidth() + 10, 0).withWidth (90), juce::Justification::centredLeft);
 
+    // MIDI control input monitor: what actually reaches KumAmp.
+    {
+        juce::String text (juce::CharPointer_UTF8 ("Todav\xc3\xad" "a no lleg\xc3\xb3 ning\xc3\xba" "n mensaje MIDI a KumAmp"));
+        bool fresh = false;
+        if (midiInCount > 0)
+        {
+            const int status = (int) (lastMidiIn >> 16) & 0xff, d1 = (int) (lastMidiIn >> 8) & 0xff, d2 = (int) lastMidiIn & 0xff;
+            const int ch = (status & 0x0f) + 1;
+            juce::String what;
+            switch (status & 0xf0)
+            {
+                case 0xc0: what = "Program Change " + juce::String (d1); break;
+                case 0xb0: what = "CC " + juce::String (d1) + " = " + juce::String (d2); break;
+                case 0x90: what = "Nota " + juce::String (d1) + " vel " + juce::String (d2); break;
+                case 0x80: what = "Nota off " + juce::String (d1); break;
+                case 0xe0: what = "Pitch bend"; break;
+                default:   what = "0x" + juce::String::toHexString (status); break;
+            }
+            const double ago = (juce::Time::getMillisecondCounterHiRes() - lastMidiInTime) / 1000.0;
+            fresh = ago < 1.0;
+            text = juce::String (juce::CharPointer_UTF8 ("\xc3\x9a" "ltimo MIDI recibido: "));
+            text << what << "  (canal " << ch << ")   " << juce::String ((int) midiInCount) << (midiInCount == 1 ? " mensaje" : " mensajes");
+        }
+        g.setColour (fresh ? theme::good : theme::textDim);
+        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.drawText (text, midiInArea, juce::Justification::centredLeft);
+    }
+
     // How to route it in the DAW.
     g.setColour (theme::textDim);
     g.setFont (juce::FontOptions (14.0f));
@@ -160,5 +195,7 @@ void SettingsView::resized()
     pcScenes.setBounds (c.removeFromTop (30));
     c.removeFromTop (6);
     ccMacros.setBounds (c.removeFromTop (30));
+    c.removeFromTop (6);
+    midiInArea = c.removeFromTop (26);
 }
 } // namespace kumamp

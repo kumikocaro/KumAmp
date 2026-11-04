@@ -18,7 +18,7 @@ endif()
 # Windows: runtime de MSVC estatico -> el usuario no necesita instalar el VC++ Redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(KumAmp VERSION 0.1.6 LANGUAGES C CXX)
+project(KumAmp VERSION 0.1.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -81,6 +81,9 @@ add_library(KumAmpCore STATIC
     Source/DSP/Pitch/PreFxBlocks.cpp
     Source/DSP/Pitch/GuitarSynthBlock.cpp
     Source/DSP/Pitch/PolyNoteDetector.cpp
+    Source/DSP/Pitch/SitarBlock.cpp
+    Source/DSP/Pitch/TanpuraDrone.cpp
+    Source/DSP/Pitch/CharangoBlock.cpp
     Source/DSP/Pitch/InstrumentSynth.cpp
     Source/DSP/Dynamics/DynamicsBlocks.cpp
     Source/DSP/Modulation/ModulationBlocks.cpp
@@ -276,7 +279,7 @@ if(KUMAMP_BUILD_TESTS)
     juce_add_console_app(KumAmpHostTest PRODUCT_NAME "KumAmpHostTest")
     target_sources(KumAmpHostTest PRIVATE Tests/HostTest.cpp)
     target_compile_definitions(KumAmpHostTest PRIVATE
-        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1
         KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
         KUMAMP_VST3_PATH="$<GENEX_EVAL:$<TARGET_PROPERTY:KumAmp_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
     target_link_libraries(KumAmpHostTest PRIVATE

@@ -32,6 +32,8 @@ public:
 
     /** "Quitar" pressed: remove the block from the grid. */
     std::function<void()> onRemove;
+    /** "Modelo" picked: swap the block for another of its family, in the same place. */
+    std::function<void (BlockType)> onChangeType;
     /** Expand button of the graphic EQ: open it large. */
     std::function<void (std::shared_ptr<ParamStore>)> onExpandEq;
     /** "TONE3000" button of the NAM amp block: pick a tone on tone3000.com for this store. */
@@ -81,6 +83,8 @@ private:
     std::unique_ptr<EqView> eqView;
     std::unique_ptr<juce::TextButton> tone3000Button;
     std::unique_ptr<juce::HyperlinkButton> tone3000Credit;
+    std::unique_ptr<juce::ComboBox> modelBox;          // the block's family (Chorus, Flanger, Phaser...)
+    std::vector<BlockType> modelTypes;
     std::unique_ptr<juce::ComboBox> variants;          // other captures of the loaded TONE3000 tone
     t3k::Tone variantTone;
     juce::Array<t3k::Model> variantModels;

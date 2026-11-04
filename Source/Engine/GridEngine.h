@@ -104,6 +104,10 @@ public:
         and re-inserts the same instance (state, params, files) on from -> to. */
     bool moveBlock (NodeId node, PortRef from, NodeId to, juce::String* error = nullptr);
 
+    /** Swaps a block for another type in the same place (e.g. Chorus -> Phaser). The new
+        block starts from its defaults but keeps the bypass state, also in every scene. */
+    bool replaceBlock (NodeId node, BlockType type, juce::String* error = nullptr);
+
     //== Undo / redo of structural edits (insert, remove, move) ===================
     bool canUndo() const noexcept { return ! undoStack.empty(); }
     bool canRedo() const noexcept { return ! redoStack.empty(); }

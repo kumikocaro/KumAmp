@@ -2,7 +2,9 @@
 // model), selects the amp block and writes the window to PNG.
 
 #include "DSP/Pitch/PitchShifterBlock.h"
+#include "DSP/Pitch/CharangoBlock.h"
 #include "DSP/Pitch/GuitarSynthBlock.h"
+#include "DSP/Pitch/SitarBlock.h"
 #include "PluginEditor.h"
 #include "DSP/Time/DelayBlocks.h"
 #include "DSP/Cab/FactoryCabs.h"
@@ -245,6 +247,23 @@ int main()
         pump (300);
         allOk = save ("editor_synth_instrument.png") && allOk;
     }
+
+    // Sitar and Charango (Modelado) panels.
+    for (const auto type : { kumamp::BlockType::Sitar, kumamp::BlockType::Charango })
+        if (const auto* amp = engine.getModel().findNode (ampNode))
+        {
+            const auto node = engine.insertBlock (amp->inputs[0], amp->id, type, false);
+            if (const auto* inserted = engine.getModel().findNode (node))
+                if (auto store = engine.getStore (inserted->store))
+                    store->setParam (type == kumamp::BlockType::Charango ? (int) kumamp::CharangoBlock::Mode
+                                                                         : (int) kumamp::SitarBlock::Tanpura, 1.0f);
+            pump (100);
+            for (auto* child : sections())
+                if (auto* gridView = dynamic_cast<kumamp::GridView*> (child))
+                    gridView->selectNode (node);
+            pump (300);
+            allOk = save (type == kumamp::BlockType::Sitar ? "editor_sitar.png" : "editor_charango.png") && allOk;
+        }
     if (auto* param = processor.getParameters().getParameter ("gate_mode"))
         param->setValueNotifyingHost (0.0f);
 

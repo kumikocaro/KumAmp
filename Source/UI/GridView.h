@@ -32,6 +32,8 @@ public:
     NodeId getSelectedNode() const noexcept { return selectedNode; }
     void selectNode (NodeId id);
     bool removeSelected();
+    /** Swaps the selected block for another type in the same place (its variants). */
+    bool replaceSelected (BlockType type);
 
     /** Where a block picked from the palette goes: after the selected block, or before OUT. */
     InsertTarget defaultInsertTarget() const;

@@ -14,7 +14,9 @@ enum class BlockType : std::uint16_t
     // Input
     Tuner, NoiseGate,
     // Pitch & Pre-FX
-    PitchShifter, Wah, AutoWah, Octaver, GuitarSynth,
+    PitchShifter, Wah, AutoWah, Octaver,
+    // Experimental (instruments played by the guitar)
+    GuitarSynth, Sitar, Charango,
     // Drive (before the amp)
     Overdrive,
     // Core
@@ -36,7 +38,7 @@ enum class BlockType : std::uint16_t
 
 enum class BlockCategory : std::uint8_t
 {
-    Input, PitchPre, Drive, Amp, Cab, Dynamics, Modulation, Time, Utility, Routing
+    Input, PitchPre, Experimental, Drive, Amp, Cab, Dynamics, Modulation, Time, Utility, Routing
 };
 
 struct BlockTypeInfo

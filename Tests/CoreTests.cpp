@@ -13,7 +13,9 @@
 #include "Core/PitchDetector.h"
 #include "Core/RealtimePitchTracker.h"
 #include "DSP/Midi/GuitarToMidi.h"
+#include "DSP/Pitch/CharangoBlock.h"
 #include "DSP/Pitch/GuitarSynthBlock.h"
+#include "DSP/Pitch/SitarBlock.h"
 #include "DSP/Pitch/PolyNoteDetector.h"
 #include "DSP/Dynamics/DynamicsBlocks.h"
 #include "DSP/Modulation/ModulationBlocks.h"
@@ -1178,6 +1180,381 @@ void testInstrumentSynth()
     }
 }
 
+/** A sine burst with 10 ms fades (a short, clean excitation). */
+std::vector<float> burst (double hz, double seconds, double total, float amplitude)
+{
+    std::vector<float> x ((size_t) (kRate * total), 0.0f);
+    const auto n = (size_t) (kRate * seconds), fade = (size_t) (0.01 * kRate);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const float env = (float) std::min ({ 1.0, (double) i / fade, (double) (n - i) / fade });
+        x[i] = amplitude * env * (float) std::sin (2.0 * 3.141592653589793 * hz * (double) i / kRate);
+    }
+    return x;
+}
+
+double highBandRatioDb (const std::vector<float>& x, size_t from, size_t to, float hz)
+{
+    Biquad hp1, hp2;
+    hp1.setHighPass (kRate, hz);
+    hp2.setHighPass (kRate, hz);
+    std::vector<float> high (x.size());
+    for (size_t i = 0; i < x.size(); ++i)
+        high[i] = hp2.process (hp1.process (x[i]));
+    return rmsDb (high, from, to) - rmsDb (x, from, to);
+}
+
+/** Level (dB) of one frequency in x[from, to) (Hann-windowed DFT bin). */
+double toneLevelDb (const std::vector<float>& x, size_t from, size_t to, double hz)
+{
+    double re = 0.0, im = 0.0;
+    const double n = (double) (to - from);
+    for (size_t i = from; i < to; ++i)
+    {
+        const double w = 0.5 - 0.5 * std::cos (2.0 * 3.141592653589793 * (double) (i - from) / n);
+        const double phase = 2.0 * 3.141592653589793 * hz * (double) i / kRate;
+        re += w * x[i] * std::cos (phase);
+        im += w * x[i] * std::sin (phase);
+    }
+    return 20.0 * std::log10 (4.0 * std::sqrt (re * re + im * im) / n + 1e-12);
+}
+
+void testSitar()
+{
+    std::puts ("sitar (sympathetic strings, freeze, jawari, bend, level)");
+    using S = SitarBlock;
+    auto makeRig = [] (float dry, float lead, float symp, int mode = 0)
+    {
+        BlockRig rig (BlockType::Sitar);
+        rig.set (S::Mode, (float) mode);
+        rig.set (S::Dry, dry);
+        rig.set (S::Lead, lead);
+        rig.set (S::Sympathetic, symp);
+        rig.block->prepare (kRate, kBlock);
+        return rig;
+    };
+    const auto seconds = [] (double s) { return (size_t) (s * kRate); };
+
+    // The strings (E Kafi by default) answer E4 and stay quiet for F4, which is not in the scale.
+    double ringIn = 0.0, ringOut = 0.0;
+    for (const int note : { 64, 65 })
+    {
+        auto rig = makeRig (0.0f, 0.0f, 100.0f);
+        auto l = burst (440.0 * std::pow (2.0, (note - 69) / 12.0), 0.3, 1.6, 0.2f), r = l;
+        rig.run (l, r);
+        (note == 64 ? ringIn : ringOut) = rmsDb (l, seconds (0.5), seconds (1.5));
+    }
+    std::printf ("  sympathetic ring after the note: E4 %.1f dB, F4 %.1f dB\n", ringIn, ringOut);
+    CHECK (ringIn > ringOut + 10.0);
+    CHECK (ringIn > -60.0);
+
+    // Freeze holds the drone; without it the strings die away.
+    double held = 0.0, free = 0.0;
+    for (const bool freeze : { true, false })
+    {
+        auto rig = makeRig (0.0f, 0.0f, 100.0f);
+        auto l = burst (329.63, 0.3, 3.0, 0.2f), r = l;
+        // Freeze while the strings ring (after the note).
+        std::vector<float> l1 (l.begin(), l.begin() + (long) seconds (0.35)), r1 (l1);
+        rig.run (l1, r1);
+        rig.set (S::Freeze, freeze ? 1.0f : 0.0f);
+        std::vector<float> l2 (l.begin() + (long) seconds (0.35), l.end()), r2 (l2);
+        rig.run (l2, r2);
+        std::copy (l1.begin(), l1.end(), l.begin());
+        std::copy (l2.begin(), l2.end(), l.begin() + (long) l1.size());
+        (freeze ? held : free) = rmsDb (l, seconds (2.5), seconds (3.0));
+        if (freeze)
+        {
+            float peak = 0.0f;
+            for (float v : l) peak = std::max (peak, std::abs (v));
+            CHECK (peak < 1.0f);
+        }
+    }
+    std::printf ("  2.5 s after: frozen %.1f dB, free %.1f dB\n", held, free);
+    CHECK (held > free + 20.0);
+
+    // The bridge contact adds the high harmonics a plain note (a pure, decaying E3) does not have.
+    // Modelado: the string is in tune, near the guitar's level, and its jawari brightens it.
+    for (const int mode : { 0, 1 })
+    {
+        double plain = 0.0, buzzing = 0.0, level = 0.0, pitch = 0.0;
+        for (const float buzz : { 0.0f, 100.0f })
+        {
+            auto rig = makeRig (0.0f, 100.0f, 0.0f, mode);
+            rig.set (S::Buzz, buzz);
+            std::vector<float> l ((size_t) kRate, 0.0f);
+            for (size_t i = seconds (0.05); i < l.size(); ++i)
+            {
+                const double t = (double) i / kRate - 0.05;
+                l[i] = (float) (0.2 * std::exp (-t / 0.8) * std::min (1.0, t / 0.002) * std::sin (2.0 * 3.141592653589793 * 164.81 * t));
+            }
+            auto r = l;
+            rig.run (l, r);
+            (buzz > 0.0f ? buzzing : plain) = highBandRatioDb (l, seconds (0.1), seconds (0.9), 2000.0f);
+            if (buzz > 0.0f)
+                level = rmsDb (l, seconds (0.1), seconds (0.9));
+            else
+            {
+                double best = -300.0;
+                for (double f = 150.0; f < 180.0; f *= 1.0005)
+                    if (const double v = toneLevelDb (l, seconds (0.2), seconds (0.9), f); v > best) { best = v; pitch = f; }
+            }
+        }
+        std::printf ("  %s: energy above 2 kHz: plain %.1f dB, jawari %.1f dB; level %.1f dB (input -20 dB)",
+                     mode ? "modelado" : "procesado", plain, buzzing, level);
+        if (mode)
+            std::printf ("; string %.2f Hz (E3 164.81)", pitch);
+        std::printf ("\n");
+        CHECK (buzzing > plain + (mode ? 3.0 : 15.0));
+        CHECK (level > -28.0 && level < -12.0);
+        if (mode)
+            CHECK (std::abs (1200.0 * std::log2 (pitch / 164.81)) < 6.0);
+    }
+
+    // Bend: an octave up on the lead (WSOLA when processed; the string itself when modelled).
+    for (const int mode : { 0, 1 })
+    {
+        auto rig = makeRig (0.0f, 100.0f, 0.0f, mode);
+        rig.set (S::Buzz, 0.0f);
+        rig.set (S::Bend, 12.0f);
+        rig.block->reset();
+        auto l = sine (220.0, 0.6, 0.2f), r = l;
+        rig.run (l, r);
+        const double octave = toneLevelDb (l, seconds (0.2), seconds (0.6), 440.0);
+        const double unison = toneLevelDb (l, seconds (0.2), seconds (0.6), 220.0);
+        std::printf ("  bend +12 (%s): 440 Hz %.1f dB, 220 Hz %.1f dB\n", mode ? "modelado" : "procesado", octave, unison);
+        CHECK (octave > unison + 20.0);
+    }
+
+    // Tampura: a sustained drone with no input, on the sitar's key or its own; silent when off.
+    for (const int tanpuraKey : { -1, 0, 1 })
+    {
+        auto rig = makeRig (0.0f, 0.0f, 0.0f);
+        rig.set (S::Tanpura, tanpuraKey < 0 ? 0.0f : 1.0f);
+        rig.set (S::TanpuraLevel, 100.0f);
+        rig.set (S::TanpuraKey, tanpuraKey < 0 ? 0.0f : (float) tanpuraKey);   // 0 = sitar key (E), 1 = C
+        rig.set (S::TanpuraOutput, 1.0f);                                        // with the chain: in the block's output
+        rig.block->reset();
+        std::vector<float> l ((size_t) (8.0 * kRate), 0.0f), r (l);
+        rig.run (l, r);
+        const double level = rmsDb (l, seconds (2.0), seconds (8.0));
+        if (tanpuraKey < 0)
+        {
+            std::printf ("  tampura off: %.1f dB\n", level);
+            CHECK (level < -100.0);
+            continue;
+        }
+        // Sustained: no gaps or plucks, every 100 ms window close to the average.
+        double quietest = 0.0, loudest = -200.0;
+        for (double t = 2.0; t < 7.95; t += 0.1)
+        {
+            const double w = rmsDb (l, seconds (t), seconds (t + 0.1));
+            quietest = std::min (quietest, w);
+            loudest = std::max (loudest, w);
+        }
+        const double sa = tanpuraKey == 0 ? 164.81 : 130.81;   // E3 / C3
+        const double atSa = toneLevelDb (l, seconds (2.0), seconds (3.0), sa);
+        const double offSa = toneLevelDb (l, seconds (2.0), seconds (3.0), sa * std::pow (2.0, 1.0 / 12.0));
+        float peak = 0.0f;
+        bool finite = true;
+        for (float v : l) { peak = std::max (peak, std::abs (v)); finite = finite && std::isfinite (v); }
+        std::printf ("  tampura %s: %.1f dB rms (100 ms windows %.1f .. %.1f), peak %.1f dB, Sa %.1f dB vs a semitone up %.1f dB\n",
+                     tanpuraKey == 0 ? "E (sitar key)" : "C", level, quietest, loudest, 20.0 * std::log10 (peak + 1e-9), atSa, offSa);
+        CHECK (finite);
+        CHECK (level > -30.0 && level < -18.0);
+        CHECK (loudest - quietest < 6.0);
+        CHECK (peak < 0.5f);
+        CHECK (atSa > offSa + 12.0);
+    }
+
+    // Tampura "Directo": it reaches the output around the blocks after the sitar.
+    for (const bool direct : { true, false })
+    {
+        Rig rig;
+        GridModel m;
+        auto sitar = rig.make (BlockType::Sitar);
+        auto volume = rig.make (BlockType::Volume);
+        for (int p : { (int) S::Dry, (int) S::Lead, (int) S::Sympathetic })
+            sitar->setParam (p, 0.0f);
+        sitar->setParam (S::Tanpura, 1.0f);
+        sitar->setParam (S::TanpuraLevel, 100.0f);
+        sitar->setParam (S::TanpuraOutput, direct ? 0.0f : 1.0f);
+        volume->setParam (VolumeBlock::LevelDb, -60.0f);   // the "chain" after the sitar
+        const auto in = m.addNode (NodeKind::Input);
+        const auto a = m.addNode (NodeKind::Block, sitar->getId());
+        const auto b = m.addNode (NodeKind::Block, volume->getId());
+        const auto out = m.addNode (NodeKind::Output);
+        m.connect ({ in, 0 }, a);
+        m.connect ({ a, 0 }, b);
+        m.connect ({ b, 0 }, out);
+        auto res = rig.compile (m);
+        CHECK (res.plan != nullptr);
+        if (! res.plan) return;
+        std::vector<float> l ((size_t) (3.0 * kRate), 0.0f), r (l);
+        render (*res.plan, l, r);
+        const double level = rmsDb (l, seconds (2.0), seconds (3.0));
+        double bypassed = 0.0;
+        if (direct)
+        {
+            sitar->setBypassed (true);
+            std::vector<float> l2 ((size_t) (0.5 * kRate), 0.0f), r2 (l2);
+            render (*res.plan, l2, r2);
+            bypassed = rmsDb (l2, seconds (0.2), seconds (0.5));
+        }
+        std::printf ("  tampura %s, volume -60 dB after it: %.1f dB%s\n", direct ? "directo" : "con la cadena", level,
+                     direct ? (" (sitar bypassed: " + std::to_string ((int) bypassed) + " dB)").c_str() : "");
+        if (direct)
+        {
+            CHECK (level > -30.0);
+            CHECK (bypassed < -100.0);
+        }
+        else
+            CHECK (level < -75.0);
+    }
+
+    // Default settings on a chord (processed: the chord mode): level close to the guitar, finite, bounded.
+    {
+        auto rig = makeRig (0.0f, 80.0f, 50.0f);
+        std::vector<float> l ((size_t) (2.0 * kRate), 0.0f);
+        addPluckedChord (l, 0.05, { 40, 47, 52, 56, 59, 64 });
+        const double in = rmsDb (l, seconds (0.1), seconds (1.5));
+        auto r = l;
+        rig.run (l, r);
+        bool finite = true;
+        float peak = 0.0f;
+        for (size_t i = 0; i < l.size(); ++i)
+        {
+            finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]);
+            peak = std::max ({ peak, std::abs (l[i]), std::abs (r[i]) });
+        }
+        const double out = 0.5 * (rmsDb (l, seconds (0.1), seconds (1.5)) + rmsDb (r, seconds (0.1), seconds (1.5)));
+        std::printf ("  E chord: in %.1f dB, out %.1f dB rms, peak %.1f dB\n", in, out, 20.0 * std::log10 (peak + 1e-9));
+        CHECK (finite);
+        CHECK (std::abs (out - in) < 6.0);
+        CHECK (peak < 0.7f);
+    }
+}
+
+void testSitarModelled()
+{
+    std::puts ("sitar modelado (pluck follows the notes, slide, bounded)");
+    using S = SitarBlock;
+    const auto seconds = [] (double s) { return (size_t) (s * kRate); };
+    BlockRig rig (BlockType::Sitar);   // default settings: Modelado
+    rig.block->reset();
+    std::vector<float> l ((size_t) (3.0 * kRate), 0.0f);
+    addPluckedChord (l, 0.05, { 52 }, 0.2f);   // E3
+    std::vector<float> next ((size_t) (3.0 * kRate), 0.0f);
+    addPluckedChord (next, 1.5, { 57 }, 0.2f); // A3, picked over the ringing E3
+    for (size_t i = seconds (1.5); i < l.size(); ++i)
+        l[i] = next[i] + 0.1f * l[i];
+    float inPeak = 0.0f;
+    for (float v : l) inPeak = std::max (inPeak, std::abs (v));
+    auto r = l;
+    rig.run (l, r);
+    const double e3 = toneLevelDb (l, seconds (0.5), seconds (1.4), 164.81), a3 = toneLevelDb (l, seconds (1.8), seconds (2.7), 220.0);
+    const double e3late = toneLevelDb (l, seconds (1.8), seconds (2.7), 164.81);
+    // The pluck lands within ~20 ms of the pick.
+    size_t onset = 0;
+    for (size_t i = seconds (1.5); i < seconds (1.6) && onset == 0; ++i)
+        if (rmsDb (l, i, i + 48) > rmsDb (l, seconds (1.45), seconds (1.5)) + 6.0)
+            onset = i;
+    bool finite = true;
+    float peak = 0.0f;
+    for (size_t i = 0; i < l.size(); ++i) { finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]); peak = std::max ({ peak, std::abs (l[i]), std::abs (r[i]) }); }
+    std::printf ("  E3 %.1f dB, then A3 %.1f dB (E3 left %.1f dB), re-pluck %.1f ms after the pick, peak %.1f dB (input %.1f dB)\n",
+                 e3, a3, e3late, onset > 0 ? 1000.0 * (double) (onset - seconds (1.5)) / kRate : -1.0,
+                 20.0 * std::log10 (peak + 1e-9), 20.0 * std::log10 (inPeak + 1e-9));
+    CHECK (finite);
+    CHECK (peak < 2.0f * inPeak && peak < 1.0f);
+    CHECK (e3 > -40.0);
+    CHECK (a3 > e3late + 15.0);
+    CHECK (onset > 0 && onset < seconds (1.5 + 0.03));
+    CHECK (std::lround (rig.block->getParam (S::Mode)) == 1);
+}
+
+void testCharango()
+{
+    std::puts ("charango (fold voicing, processed octave, modelled strum, level)");
+    using C = CharangoBlock;
+    const auto seconds = [] (double s) { return (size_t) (s * kRate); };
+
+    // Re-voicing: an open E chord on the guitar becomes a close charango voicing.
+    {
+        const std::uint8_t notes[] { 40, 45, 50, 55, 59, 64 };
+        std::uint8_t out[6] {};
+        const int n = C::foldVoicing (notes, 6, out);
+        CHECK (n == 5);
+        const std::uint8_t expected[] { 64, 67, 69, 71, 74 };
+        CHECK (std::equal (out, out + 5, expected));
+    }
+
+    // Procesado: the guitar an octave up.
+    {
+        BlockRig rig (BlockType::Charango);
+        rig.set (C::Octavado, 0.0f);
+        rig.set (C::Courses, 0.0f);
+        rig.set (C::Body, 0.0f);
+        rig.set (C::Sustain, 100.0f);
+        rig.block->reset();
+        auto l = sine (220.0, 0.6, 0.2f), r = l;
+        rig.run (l, r);
+        const double f = estimateFrequency (l, seconds (0.2), seconds (0.6));
+        std::printf ("  procesado, A3 in: %.1f Hz out\n", f);
+        CHECK_NEAR (f, 440.0, 6.0);
+    }
+
+    for (const int mode : { 0, 1 })
+    {
+        BlockRig rig (BlockType::Charango);
+        rig.set (C::Mode, (float) mode);
+        rig.block->reset();
+        auto* charango = dynamic_cast<CharangoBlock*> (rig.block);
+        std::vector<float> l ((size_t) (2.2 * kRate), 0.0f);
+        addPluckedChord (l, 0.1, { 48, 52, 55, 60, 64 });
+        addPluckedChord (l, 1.2, { 48, 52, 55, 60, 64 });
+        const double in = rmsDb (l, seconds (0.1), seconds (1.1));
+        auto r = l;
+
+        // First half, then read the voicing while the chord rings.
+        std::vector<float> l1 (l.begin(), l.begin() + (long) seconds (0.6)), r1 (l1);
+        rig.run (l1, r1);
+        const auto voicing = charango->getHeldNotesText();
+        std::vector<float> l2 (l.begin() + (long) seconds (0.6), l.end()), r2 (l2);
+        rig.run (l2, r2);
+        std::copy (l1.begin(), l1.end(), l.begin());
+        std::copy (l2.begin(), l2.end(), l.begin() + (long) l1.size());
+        std::copy (r1.begin(), r1.end(), r.begin());
+        std::copy (r2.begin(), r2.end(), r.begin() + (long) r1.size());
+
+        bool finite = true;
+        float peak = 0.0f;
+        size_t first = l.size();
+        for (size_t i = 0; i < l.size(); ++i)
+        {
+            finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]);
+            peak = std::max ({ peak, std::abs (l[i]), std::abs (r[i]) });
+            if (first == l.size() && std::abs (l[i]) > 0.005f)
+                first = i;
+        }
+        const double out = 0.5 * (rmsDb (l, seconds (0.1), seconds (1.1)) + rmsDb (r, seconds (0.1), seconds (1.1)));
+        const double before = rmsDb (l, seconds (1.0), seconds (1.2)), after = rmsDb (l, seconds (1.25), seconds (1.45));
+        std::printf ("  %s: in %.1f dB, out %.1f dB rms, peak %.1f dB, first sound %.0f ms after the pick, "
+                     "re-pick %.1f -> %.1f dB, voicing \"%s\"\n",
+                     mode == 0 ? "procesado" : "modelado", in, out, 20.0 * std::log10 (peak + 1e-9),
+                     1000.0 * ((double) first / kRate - 0.1), before, after, voicing.c_str());
+        CHECK (finite);
+        CHECK (std::abs (out - in) < 6.0);
+        CHECK (peak < 0.7f);
+        if (mode == 1)
+        {
+            CHECK (voicing == "E4 G4 C5");
+            CHECK ((double) first / kRate - 0.1 < 0.12);
+            CHECK (after > before + 4.0);
+        }
+    }
+}
+
 void testAdvancedGate()
 {
     std::puts ("noise gate: advanced (multiband) vs classic on a ringing note with hiss");
@@ -1302,6 +1679,8 @@ void testPitchBlockUnityIsTransparent()
 }
 } // namespace
 
+
+
 int main()
 {
     testSerialChainInPlace();
@@ -1318,6 +1697,9 @@ int main()
     testGuitarSynthTexture();
     testPolyNoteDetector();
     testInstrumentSynth();
+    testSitar();
+    testSitarModelled();
+    testCharango();
     testAdvancedGate();
     testEqListen();
     testAllBlocksStress();

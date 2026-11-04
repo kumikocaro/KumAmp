@@ -171,6 +171,46 @@ void testMidiOut (juce::AudioPluginFormat& format, const juce::PluginDescription
     plugin->releaseResources();
 }
 
+void testProgramChangeScene (juce::AudioPluginFormat& format, const juce::PluginDescription& desc)
+{
+    std::puts ("host: VST3 Program Change -> scene (footswitch)");
+    juce::String error;
+    auto plugin = format.createInstanceFromDescription (desc, kRate, kBlock, error);
+    CHECK (plugin != nullptr);
+    if (plugin == nullptr) return;
+
+    juce::AudioProcessorParameter* scene = nullptr;
+    for (auto* p : plugin->getParameters())
+        if (p->getName (64) == "Scene")
+            scene = p;
+    CHECK (scene != nullptr);
+    if (scene == nullptr) return;
+
+    plugin->prepareToPlay (kRate, kBlock);
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    // Program Change 0-3, then CC 20-23 (value 127).
+    for (const int program : { 2, 1, 3, 0, 22, 21, 23, 20 })
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (program < 20 ? juce::MidiMessage::programChange (1, program)
+                                    : juce::MidiMessage::controllerEvent (1, program, 127), 0);
+        buffer.clear();
+        plugin->processBlock (buffer, midi);
+        for (int b = 0; b < 20; ++b)
+        {
+            juce::MidiBuffer none;
+            buffer.clear();
+            plugin->processBlock (buffer, none);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+        }
+        const int got = scene->getText (scene->getValue(), 8) == "A" ? 0 : scene->getText (scene->getValue(), 8) == "B" ? 1
+                      : scene->getText (scene->getValue(), 8) == "C" ? 2 : 3;
+        std::printf ("  %s %d -> scene %s\n", program < 20 ? "PC" : "CC", program, scene->getText (scene->getValue(), 8).toRawUTF8());
+        CHECK (got == program % 20);
+    }
+    plugin->releaseResources();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -185,6 +225,7 @@ int main()
     for (const char* model : { "wavenet.nam", "A2.nam", "lstm.nam" })
         testModel (format, *types[0], model);
     testMidiOut (format, *types[0]);
+    testProgramChangeScene (format, *types[0]);
 
     std::printf (failures == 0 ? "\nHOST TEST PASSED\n" : "\n%d FAILURE(S)\n", failures);
     return failures == 0 ? 0 : 1;

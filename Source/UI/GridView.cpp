@@ -105,6 +105,18 @@ bool GridView::removeSelected()
     return true;
 }
 
+bool GridView::replaceSelected (BlockType type)
+{
+    juce::String error;
+    if (! engine.replaceBlock (selectedNode, type, &error))
+    {
+        if (onError) onError (error);
+        return false;
+    }
+    selectNode (selectedNode);   // the panel shows the new block
+    return true;
+}
+
 GridView::InsertTarget GridView::defaultInsertTarget() const
 {
     const auto& model = engine.getModel();

@@ -73,6 +73,11 @@ public:
     int getMidiOutVelocity() const noexcept  { return midiOutVelocity.load (std::memory_order_relaxed); }
     float getMidiOutBend() const noexcept    { return midiOutBend.load (std::memory_order_relaxed); }
 
+    /** MIDI control input for the UI: the last message received (status, data1, data2 packed,
+        0 = none yet) and how many have arrived. */
+    juce::uint32 getLastMidiIn() const noexcept   { return lastMidiIn.load (std::memory_order_relaxed); }
+    juce::uint32 getMidiInCount() const noexcept  { return midiInCount.load (std::memory_order_relaxed); }
+
     /** While the big tuner view is open the output can be muted ("tuner_mute"). */
     void setTunerViewOpen (bool open) noexcept { tunerViewOpen.store (open, std::memory_order_relaxed); }
 
@@ -120,6 +125,7 @@ private:
     int midiChannel = 1;
     std::atomic<int> midiOutNote { -1 }, midiOutVelocity { 0 };
     std::atomic<float> midiOutBend { 0.0f };
+    std::atomic<juce::uint32> lastMidiIn { 0 }, midiInCount { 0 };
 
     // MIDI control input (audio thread) -> parameters (message thread)
     int midiSceneOverride = -1, lastParamScene = -1;

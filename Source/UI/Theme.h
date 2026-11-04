@@ -35,6 +35,7 @@ inline juce::Colour categoryColour (BlockType type)
     {
         case BlockCategory::Input:      return juce::Colour (0xff22d3ee);
         case BlockCategory::PitchPre:   return juce::Colour (0xffa855f7);
+        case BlockCategory::Experimental: return juce::Colour (0xfff472b6);   // pink
         case BlockCategory::Drive:      return juce::Colour (0xff84cc16);   // Screamer green
         case BlockCategory::Amp:        return juce::Colour (0xfff87171);
         case BlockCategory::Cab:        return juce::Colour (0xfff59e0b);
@@ -50,7 +51,7 @@ inline juce::Colour categoryColour (BlockType type)
 enum class Icon
 {
     Pitch, Wave, Octave, Dynamics, Eq, Amp, Speaker, Sine, Delay, Reverb, Utility,
-    Plus, Save, Undo, Redo, Menu, ChevronLeft, ChevronRight, Power, File, More, Info, Trash, Logo, Expand, Synth, Drive
+    Plus, Save, Undo, Redo, Menu, ChevronLeft, ChevronRight, Power, File, More, Info, Trash, Logo, Expand, Synth, Drive, Strings
 };
 
 Icon iconFor (BlockType type) noexcept;
@@ -66,6 +67,8 @@ struct PaletteGroup
     std::vector<BlockType> types;
 };
 const std::vector<PaletteGroup>& paletteGroups();
+/** The palette group a block belongs to (its variants: blocks it can be swapped for), or nullptr. */
+const PaletteGroup* paletteGroupOf (BlockType type);
 
 /** Card background used by every section. */
 inline void drawCard (juce::Graphics& g, juce::Rectangle<float> area, float radius = 12.0f)

@@ -53,6 +53,11 @@ public:
         lays out only the relevant ones). Any thread. */
     virtual bool isParamRelevant (int /*param*/) const noexcept { return true; }
 
+    /** Audio this block sends straight to the grid output, around every block after it
+        (a backing drone the chain must not colour), faded with the bypass. Null = none.
+        Audio thread, valid after process(). */
+    const float* getDirectOutput (int channel) noexcept { return directActive ? directBuffer (channel) : nullptr; }
+
     //== Host tempo (shared by the engine; any thread) ============================
     void setTempoSource (const std::atomic<double>* bpm) noexcept { tempoSource = bpm; }
     double getTempoBpm() const noexcept
@@ -73,6 +78,10 @@ protected:
         bypass yourself (delays / reverbs: mute the input, let the tail ring). */
     virtual bool handlesBypassInternally() const noexcept { return false; }
 
+    /** The block's direct-to-output buffer for this process() call (numSamples long), or
+        nullptr. See getDirectOutput(). */
+    virtual float* directBuffer (int /*channel*/) noexcept { return nullptr; }
+
     virtual void prepareBlock (double sampleRate, int maxBlockSize) = 0;
     virtual void resetBlock() noexcept = 0;
     virtual void processBlock (float* left, float* right, int numSamples) noexcept = 0;
@@ -86,6 +95,7 @@ private:
     float bypassMix = 0.0f;   // 0 = active, 1 = bypassed
     float bypassStep = 0.0f;
     bool fullyBypassed = false;
+    bool directActive = false;
     bool prepared = false;
 };
 } // namespace kumamp

@@ -163,7 +163,7 @@ El EQ paramétrico tiene 8 bandas: Bell, Low/High Shelf, Low/High Cut (12, 24, 3
 - CC 11 / CC 4 (expresión) → Macro 1 (wah), CC 1 → Macro 2 y CC 2 → Macro 3.
 - La entrada MIDI no se reenvía: la salida solo lleva las notas generadas por la guitarra.
 
-**Guitar Synth** (bloque de la familia Pitch):
+**Guitar Synth** (bloque de la familia Experimental):
 - Mono: osciladores PolyBLEP (sierra, cuadrada o pulso), sub-octava y glide, siguiendo la nota tocada.
 - Poly: funciona con acordes mediante fuzz cuadrado y sub-octava polifónica (WSOLA).
 - Textura: una capa sintética con ataque de guitarra, pensada para mezclar debajo de la guitarra real (funciona con acordes). Cada púa se detecta y dispara una envolvente de "pluck" (Decay) que maneja el nivel y el filtro, como un pluck de sintetizador. La voz es la guitarra cuadrada más una octava arriba (+1 Oct) y el sub, abierta en estéreo con dos delays cortos modulados (Ancho). Para usarla de complemento, la Mezcla va bien entre 25 % y 40 %.
@@ -178,6 +178,27 @@ El EQ paramétrico tiene 8 bandas: Bell, Low/High Shelf, Low/High Cut (12, 24, 3
   - **Secuencia:** Arp Sube, Arp Baja, Arp Sube-Baja, Arp Azar, Acordes, Tresillo, Galope u Octavas, sincronizada al tempo del proyecto. El patrón arranca con la primera púa.
   - **Ajustes de la secuencia:** Ritmo (1/4 a 1/32, con tresillos), Duración de cada nota, Octavas del arpegio (1 a 3) y Swing.
 - El panel muestra solo los controles del modo elegido. En Instrumento, los chips indican el sonido y las notas que está leyendo.
+
+### Sitar
+
+Convierte la guitarra en un lead de sitar con un anillo de cuerdas simpáticas. Tiene dos modos:
+
+- **Modelado** (por defecto): el lead es una cuerda de sitar propia. El afinador interno lee la nota y cada púa pulsa una cuerda de acero modelada con el jawari *dentro* de la cuerda. Mientras la cuerda pasa sobre el puente curvo, lo toca más adelante y su largo se acorta, así que el zumbido aparece en la púa y va bajando por los armónicos a medida que la nota decae, como en el puente real. La cuerda sigue a la guitarra todo el tiempo, así que los slides y bends se vuelven meend. Suena mientras suene la nota de la guitarra y pasa por un cuerpo de sitar (calabaza, medios nasales, brillo de acero). El click de la púa de la guitarra cubre los ~20 ms que tarda en leer la nota. Es para notas sueltas, no para acordes.
+- **Procesado** (sin latencia, funciona con acordes). **Lead (jawari):** la cuerda del sitar roza un puente ancho y curvo, así que su largo efectivo cambia con la amplitud. Se modela como un retardo que depende de la amplitud y actúa de un solo lado, más un recorte de contacto también de un solo lado, ambos sobre la señal normalizada por el pico del ataque. El zumbido es máximo en la púa y se suaviza a medida que la nota decae. Un pasabanda resonante que sigue la nota (afinador interno) barre desde un armónico alto hacia uno bajo después de cada púa.
+- **Bend:** sube el pitch del lead hasta una octava (en Modelado la cuerda misma, en Procesado con WSOLA), para hacer el meend desde un pedal de expresión o automatización.
+- **Cuerdas simpáticas:** 12 cuerdas de guía de onda afinadas a una Tonalidad y una Escala (Bilawal, Khamaj, Kafi, Asavari, Bhairav, Yaman, Todi, Bhupali, Sa-Pa), excitadas por la guitarra. Solo resuenan cuando lo que tocás comparte sus notas, como en un sitar. **Congelar** sostiene el drone que está sonando.
+- **Tampura:** un drone sostenido de fondo para ambientar. Cuatro cuerdas (la primera en Pa, Ma o Ni, dos en Sa y el Sa grave) suenan sin parar, cada una como un banco de armónicos. El brillo del puente del tampura se mueve despacio por sus armónicos, cada cuerda a su ritmo, con una respiración suave del nivel: el drone nunca queda quieto pero siempre está en su nota.
+  - **Drone** es su nivel. **Tono tampura** sigue la Tonalidad del sitar o se elige aparte. **Textura** fija cuánto se mueve ese brillo y **Movimiento** su velocidad (2 a 30 s por vuelta).
+  - **Salida tampura:** «Directo» (por defecto) la manda a la salida por fuera de la cadena, sin pasar por el amp ni los efectos que vienen después; «Con la cadena» la suma a la guitarra. Entra y sale con un fundido de 1,5 s, y también hace sonar un poco las cuerdas simpáticas.
+- **Niveles:** Seco, Lead y Simpáticas por separado, con Tono lead y Tono simp para el lead y para las cuerdas, y Cola de las simpáticas.
+
+### Charango
+
+El charango del norte argentino y los Andes: 10 cuerdas de nylon en 5 órdenes dobles, temple natural (sol, do, mi, la, mi), re-entrante, con el orden del medio en octavas, caja chica y brillante y poco sustain.
+
+- **Procesado** (baja latencia, ~15 ms): la guitarra una octava arriba (WSOLA polifónico), cada nota doblada como un orden (dos copias apenas desafinadas y retrasadas, abiertas en estéreo), el **Octavado** (la otra octava mezclada), un **Sustain** más corto (el decay se acorta respecto de la púa) y el **Cuerpo** chico (sin graves, resonancias de aire y tapa, agudos brillantes). **Registro** elige entre «+1 octava» y el registro de la guitarra.
+- **Modelado:** el detector polifónico lee el acorde y lo re-voicea como un charango (cada nota se pliega a Mi4–Re#5 y el orden de Mi va en octavas). Lo tocan órdenes dobles de nylon modelados (guías de onda) a través del mismo cuerpo. Cada púa rasguea los órdenes con el **Rasgueo** elegido (0 a 40 ms entre cuerdas) y alterna abajo/arriba cuando las púas vienen rápidas. Es lo más fiel en acordes, con los 40–80 ms del detector.
+- Los chips muestran el temple y, en Modelado, el voicing que está tocando.
 
 ### Noise Gate: Clásico y Avanzado
 
@@ -255,6 +276,7 @@ Los parámetros `tuner_reference`, `tuner_mute` y `tuner_mode` se guardan con el
 |-----------|---------|
 | Entrada | Noise Gate (histéresis, hold, rango; modo Avanzado multibanda) · Afinador global |
 | Pitch / Pre-FX | Pitch Shifter WSOLA · Wah (SVF TPT) · Auto-Wah · Octaver polifónico (-1 y +1 octava, WSOLA) |
+| Experimental | Guitar Synth · Sitar (cuerda modelada o procesado, jawari, cuerdas simpáticas y tampura) · Charango (procesado o modelado) |
 | Drive | Overdrive (Tube Screamer TS808 / TS9 / Mod, oversampling 4x) |
 | Amp / Cab | NAM · IR Loader dual con 11 gabinetes KumAmp (55 IR) |
 | Dinámica / EQ | Compresor (detector de pico desacoplado, knee, mezcla en paralelo) · EQ paramétrico (6 etapas) · EQ gráfico de 10 bandas · Transient Shaper |
@@ -263,9 +285,11 @@ Los parámetros `tuner_reference`, `tuner_mute` y `tuner_mode` se guardan con el
 | Reverb | Hall, Shimmer y Cloud (FDN de 8 líneas con matriz Householder y modulación) · Plate (Dattorro 1997) · Spring (cadena de allpass dispersiva) |
 | Utilidad | Volumen/Pan · Splitter · Mixer |
 
+**Modelo:** en el panel de cada bloque, el selector de arriba cambia el efecto por otro de su familia sin moverlo del grid (por ejemplo Chorus → Phaser, Plate → Hall). El nuevo arranca con sus valores por defecto, conserva el encendido/apagado de cada escena y se puede deshacer.
+
 **Trails:** los delays y reverbs heredan de `TrailsBlock`. Su bypass silencia la entrada (no la salida), así que la cola sigue sonando. Cuando la cola se apaga, el bloque deja de consumir CPU. La ventana de silencio cubre el hueco más largo posible entre ecos.
 
-Cada bloque consume entre 0,03 % y 0,45 % de un núcleo de Apple Silicon (medido en `KumAmpTests`).
+Cada bloque consume entre 0,03 % y 0,5 % de un núcleo de Apple Silicon; los más pesados son el Guitar Synth (~0,8 %) y el Sitar (~1,9 %) (medido en `KumAmpTests`).
 
 ### Preset por defecto
 

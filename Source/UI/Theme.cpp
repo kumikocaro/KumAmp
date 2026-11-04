@@ -13,6 +13,8 @@ Icon iconFor (BlockType type) noexcept
         case BlockType::AutoWah:         return Icon::Wave;
         case BlockType::Octaver:         return Icon::Octave;
         case BlockType::GuitarSynth:     return Icon::Synth;
+        case BlockType::Sitar:
+        case BlockType::Charango:        return Icon::Strings;
         case BlockType::NoiseGate:
         case BlockType::Compressor:
         case BlockType::TransientShaper: return Icon::Dynamics;
@@ -44,7 +46,8 @@ Icon iconFor (BlockType type) noexcept
 const std::vector<PaletteGroup>& paletteGroups()
 {
     static const std::vector<PaletteGroup> groups {
-        { "Pitch",      Icon::Pitch,    { BlockType::PitchShifter, BlockType::Wah, BlockType::AutoWah, BlockType::Octaver, BlockType::GuitarSynth } },
+        { "Pitch",      Icon::Pitch,    { BlockType::PitchShifter, BlockType::Wah, BlockType::AutoWah, BlockType::Octaver } },
+        { "Experimental", Icon::Strings, { BlockType::GuitarSynth, BlockType::Sitar, BlockType::Charango } },
         { "Dynamics",   Icon::Dynamics, { BlockType::NoiseGate, BlockType::Compressor, BlockType::TransientShaper } },
         { "EQ",         Icon::Eq,       { BlockType::ParametricEq, BlockType::GraphicEq } },
         { "Drive",      Icon::Drive,    { BlockType::Overdrive } },
@@ -58,6 +61,14 @@ const std::vector<PaletteGroup>& paletteGroups()
         { "Utility",    Icon::Utility,  { BlockType::Volume } },
     };
     return groups;
+}
+
+const PaletteGroup* paletteGroupOf (BlockType type)
+{
+    for (const auto& group : paletteGroups())
+        if (std::find (group.types.begin(), group.types.end(), type) != group.types.end())
+            return &group;
+    return nullptr;
 }
 
 void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::Colour colour, float stroke)
@@ -206,6 +217,12 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             }
             for (float x : { 5.5f, 9.5f, 14.5f, 18.5f })
                 p.addRectangle (juce::Rectangle<float> (P (x - 1.0f, 5), P (x + 1.0f, 12)));
+            break;
+        case Icon::Strings:   // plucked instrument: round body, neck and strings
+            p.addEllipse (juce::Rectangle<float> (P (2, 11), P (13, 22)));
+            p.startNewSubPath (P (10.5f, 13.5f)); p.lineTo (P (20, 4));
+            p.startNewSubPath (P (19, 2)); p.lineTo (P (22, 5));
+            p.startNewSubPath (P (5, 19)); p.lineTo (P (18.5f, 5.5f));
             break;
         case Icon::Drive:   // soft-clipped wave (flattened tops)
             p.startNewSubPath (P (2, 12));

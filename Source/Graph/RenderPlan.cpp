@@ -448,5 +448,22 @@ void RenderPlan::process (const float* const* inputs, int numInputs,
             }
         }
     }
+
+    // Blocks that send part of their sound straight to the output (around the chain).
+    for (const auto& op : ops)
+        if (op.type == OpType::ProcessBlock && numOutputs > 0)
+            if (const float* l = op.block->getDirectOutput (0))
+            {
+                const float* r = op.block->getDirectOutput (1);
+                if (numOutputs == 1)
+                    for (int i = 0; i < numSamples; ++i)
+                        outputs[0][i] += 0.5f * (l[i] + r[i]);
+                else
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        outputs[0][i] += l[i];
+                        outputs[1][i] += r[i];
+                    }
+            }
 }
 } // namespace kumamp

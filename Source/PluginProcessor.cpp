@@ -24,6 +24,7 @@ namespace
     const juce::String kMidiPcId        { "midi_pc_scenes" };
     const juce::String kMidiCcId        { "midi_cc_macros" };
     constexpr int kBendRanges[] = { 0, 2, 12, 24 };
+    constexpr int kSceneCcFirst = 20;   // CC 20-23 -> scenes A-D
     const juce::Identifier kStateTag    { "KumAmpState" };
 
     juce::String macroId (int index) { return "macro_" + juce::String (index + 1); }
@@ -201,9 +202,28 @@ void KumAmpAudioProcessor::handleMidiInput (const juce::MidiBuffer& midi, int& s
     for (const auto metadata : midi)
     {
         const auto m = metadata.getMessage();
+        if (m.getRawDataSize() <= 3 && ! m.isMidiClock() && ! m.isActiveSense())
+        {
+            const auto* d = m.getRawData();
+            const int size = m.getRawDataSize();
+            lastMidiIn.store ((juce::uint32) d[0] << 16 | (juce::uint32) (size > 1 ? d[1] : 0) << 8 | (juce::uint32) (size > 2 ? d[2] : 0),
+                              std::memory_order_relaxed);
+            midiInCount.fetch_add (1, std::memory_order_relaxed);
+        }
+
         // Program Change 1-4 (0-3 on the wire) selects scene A-D.
+        // CC 20-23 (value > 0) does too, for controllers or hosts that only pass CCs.
         if (pcScenes && m.isProgramChange() && m.getProgramChangeNumber() < kumamp::kNumScenes)
             sceneFromMidi = m.getProgramChangeNumber();
+
+        // VST3 has no Program Change events: the host sends them as the kCtrlProgramChange
+        // controller, which JUCE's wrapper hands over as CC 127 with the program as its value.
+        if (pcScenes && wrapperType == wrapperType_VST3 && m.isController() && m.getControllerNumber() == 127
+            && m.getControllerValue() < kumamp::kNumScenes)
+            sceneFromMidi = m.getControllerValue();
+        if (pcScenes && m.isController() && m.getControllerNumber() >= kSceneCcFirst
+            && m.getControllerNumber() < kSceneCcFirst + kumamp::kNumScenes && m.getControllerValue() > 0)
+            sceneFromMidi = m.getControllerNumber() - kSceneCcFirst;
 
         // Expression (CC 11) and foot controller (CC 4) -> Macro 1; mod wheel CC 1 -> Macro 2; CC 2 -> Macro 3.
         if (ccMacros && m.isController())

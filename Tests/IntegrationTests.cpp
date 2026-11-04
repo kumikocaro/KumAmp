@@ -769,6 +769,56 @@ void testDefaultPresetDryEffects()
     CHECK (synthSnapshots == 4);
 }
 
+void testReplaceBlock()
+{
+    std::puts ("replace block (Chorus -> Phaser in place, scenes, undo)");
+    GridEngine engine;
+    engine.prepare (48000.0, 256);
+    engine.loadDefaultPreset();
+
+    NodeId chorusNode = kInvalidNode;
+    StoreId chorusStore = kInvalidStore;
+    std::vector<PortRef> inputs;
+    for (const auto& node : engine.getModel().getNodes())
+        if (auto s = engine.getStore (node.store); s != nullptr && s->getType() == BlockType::Chorus)
+        {
+            chorusNode = node.id;
+            chorusStore = s->getId();
+            inputs = node.inputs;
+        }
+    CHECK (chorusNode != kInvalidNode);
+    if (chorusNode == kInvalidNode)
+        return;
+    const auto bypassPerScene = [&engine] (StoreId id)
+    {
+        std::vector<bool> bypass;
+        for (const auto& sc : engine.saveState().getChildWithName ("Scenes"))
+            for (const auto& sn : sc)
+                if ((StoreId) (int) sn.getProperty ("store") == id)
+                    bypass.push_back ((bool) sn.getProperty ("bypass"));
+        return bypass;
+    };
+    const auto chorusScenes = bypassPerScene (chorusStore);
+    const bool chorusBypassed = engine.getStore (chorusStore)->isBypassed();
+
+    CHECK (engine.replaceBlock (chorusNode, BlockType::Phaser));
+    const auto* node = engine.getModel().findNode (chorusNode);
+    CHECK (node != nullptr);
+    if (node == nullptr)
+        return;
+    auto phaser = engine.getStore (node->store);
+    CHECK (phaser != nullptr && phaser->getType() == BlockType::Phaser);
+    CHECK (node->inputs == inputs);                       // same place in the chain
+    CHECK (phaser->isBypassed() == chorusBypassed);
+    CHECK (bypassPerScene (phaser->getId()) == chorusScenes);   // on / off follows it in every scene
+    CHECK (chorusScenes.size() == 4);
+
+    CHECK (engine.undo());
+    const auto* back = engine.getModel().findNode (chorusNode);
+    CHECK (back != nullptr && engine.getStore (back->store) != nullptr
+           && engine.getStore (back->store)->getType() == BlockType::Chorus);
+}
+
 void testPresets()
 {
     std::puts ("presets: save / scan / load (missing model relocated) / trash");
@@ -994,6 +1044,7 @@ int main()
     testTunerSnapshots();
     testGridEditing();
     testDefaultPresetDryEffects();
+    testReplaceBlock();
     testPresets();
     testTone3000Helpers();
     testTone3000Network();

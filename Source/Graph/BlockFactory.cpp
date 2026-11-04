@@ -2,9 +2,11 @@
 
 #include "../DSP/Dynamics/DynamicsBlocks.h"
 #include "../DSP/Modulation/ModulationBlocks.h"
+#include "../DSP/Pitch/CharangoBlock.h"
 #include "../DSP/Pitch/GuitarSynthBlock.h"
 #include "../DSP/Pitch/PitchShifterBlock.h"
 #include "../DSP/Pitch/PreFxBlocks.h"
+#include "../DSP/Pitch/SitarBlock.h"
 #include "../DSP/Time/DelayBlocks.h"
 #include "../DSP/Time/ReverbBlocks.h"
 #include "../DSP/Routing/RoutingParams.h"
@@ -43,6 +45,8 @@ std::shared_ptr<ParamStore> createStore (BlockType type, StoreId id)
         case BlockType::AutoWah:         return std::make_shared<AutoWahBlock> (id);
         case BlockType::Octaver:         return std::make_shared<OctaverBlock> (id);
         case BlockType::GuitarSynth:     return std::make_shared<GuitarSynthBlock> (id);
+        case BlockType::Sitar:           return std::make_shared<SitarBlock> (id);
+        case BlockType::Charango:        return std::make_shared<CharangoBlock> (id);
         case BlockType::Compressor:      return std::make_shared<CompressorBlock> (id);
         case BlockType::ParametricEq:    return std::make_shared<ParametricEqBlock> (id);
         case BlockType::GraphicEq:       return std::make_shared<GraphicEqBlock> (id);

@@ -70,6 +70,7 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     content.addAndMakeVisible (palette);
 
     panel.onRemove = [this] { grid.removeSelected(); };
+    panel.onChangeType = [this] (kumamp::BlockType type) { grid.replaceSelected (type); };
     panel.onExpandEq = [this] (std::shared_ptr<kumamp::ParamStore> eqStore) { showEqOverlay (std::move (eqStore)); };
     panel.onBrowseTone3000 = [this] (std::shared_ptr<kumamp::ParamStore> ampStore, juce::Component& source)
     {
@@ -90,6 +91,8 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
     content.addChildComponent (tunerView);
     content.addChildComponent (placeholder);
     settings.noteSource     = [this] { return kumProcessor.getMidiOutNote(); };
+    settings.midiInSource   = [this] { return kumProcessor.getLastMidiIn(); };
+    settings.midiInCountSource = [this] { return kumProcessor.getMidiInCount(); };
     settings.velocitySource = [this] { return kumProcessor.getMidiOutVelocity(); };
     settings.bendSource     = [this] { return kumProcessor.getMidiOutBend(); };
     content.addChildComponent (settings);

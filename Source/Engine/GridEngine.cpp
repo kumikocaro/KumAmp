@@ -393,6 +393,62 @@ bool GridEngine::moveBlock (NodeId node, PortRef from, NodeId to, juce::String* 
     return true;
 }
 
+bool GridEngine::replaceBlock (NodeId node, BlockType type, juce::String* error)
+{
+    const auto* original = model.findNode (node);
+    if (original == nullptr || original->kind != NodeKind::Block)
+    {
+        if (error != nullptr) *error = "Solo se pueden cambiar bloques de audio";
+        return false;
+    }
+    const StoreId oldId = original->store;   // `original` points into the model replaced below
+    const auto oldStore = getStore (oldId);
+    if (oldStore != nullptr && oldStore->getType() == type)
+        return true;
+
+    auto store = createStore (type);
+    if (store == nullptr)
+    {
+        if (error != nullptr) *error = "Tipo de bloque no disponible";
+        return false;
+    }
+    if (oldStore != nullptr)
+        store->setBypassed (oldStore->isBypassed());
+
+    GridModel m = model;
+    m.findNode (node)->store = store->getId();
+
+    auto before = snapshot();
+    if (! commitModel (std::move (m), error))
+    {
+        pruneUnusedStores();
+        return false;
+    }
+
+    // Scenes: the new block follows the old one's on / off in each scene. The old entry is
+    // kept (undo brings that block back).
+    for (auto& scene : editedScenes.scenes)
+    {
+        if (! scene.valid)
+            continue;
+        for (int i = 0; i < scene.numStores && scene.numStores < kMaxStores; ++i)
+            if (scene.stores[(size_t) i].id == oldId)
+            {
+                StoreSnapshot snap;
+                snap.id = store->getId();
+                snap.bypassed = scene.stores[(size_t) i].bypassed;
+                snap.numParams = std::min (store->getNumParams(), kMaxParams);
+                for (int p = 0; p < snap.numParams; ++p)
+                    snap.values[(size_t) p] = store->getParam (p);
+                scene.stores[(size_t) scene.numStores++] = snap;
+                break;
+            }
+    }
+    publishSceneBank();
+    pushUndo (std::move (before));
+    return true;
+}
+
 GridEngine::UndoEntry GridEngine::snapshot() const
 {
     UndoEntry entry { model, {} };

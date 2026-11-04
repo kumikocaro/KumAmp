@@ -1,6 +1,7 @@
 #include "BlockPanel.h"
 #include "../Graph/DSPBlock.h"
 #include "../DSP/Cab/FactoryCabs.h"
+#include <algorithm>
 #include <utility>
 
 namespace kumamp
@@ -213,6 +214,8 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
     tone3000Credit.reset();
     variants.reset();
     variantModels.clear();
+    modelBox.reset();
+    modelTypes.clear();
     syncParam = divisionParam = -1;
     store = std::move (newStore);
 
@@ -227,6 +230,34 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
         resized();
         repaint();
         return;
+    }
+
+    // Model: the other blocks of its family, swapped in place.
+    if (const auto* group = theme::paletteGroupOf (store->getType()); group != nullptr && group->types.size() > 1)
+    {
+        modelBox = std::make_unique<juce::ComboBox>();
+        modelTypes = group->types;
+        for (size_t i = 0; i < modelTypes.size(); ++i)
+        {
+            modelBox->addItem (getBlockTypeInfo (modelTypes[i]).displayName, (int) i + 1);
+            if (modelTypes[i] == store->getType())
+                modelBox->setSelectedId ((int) i + 1, juce::dontSendNotification);
+        }
+        modelBox->setTooltip ("Modelo: cambia el efecto sin mover el bloque");
+        modelBox->onChange = [this]
+        {
+            const int index = modelBox->getSelectedId() - 1;
+            if (index < 0 || index >= (int) modelTypes.size() || modelTypes[(size_t) index] == store->getType())
+                return;
+            // Async: the swap rebuilds this panel (and this combo box).
+            const auto type = modelTypes[(size_t) index];
+            juce::MessageManager::callAsync ([self = juce::Component::SafePointer<BlockPanel> (this), type]
+            {
+                if (self != nullptr && self->onChangeType)
+                    self->onChangeType (type);
+            });
+        };
+        addAndMakeVisible (*modelBox);
     }
 
     if (auto* block = dynamic_cast<DSPBlock*> (store.get()))
@@ -545,7 +576,9 @@ void BlockPanel::resized()
     meterCard = area.removeFromRight (190);
     area.removeFromRight (14);
     const bool hasFiles = ! fileSlots.empty();
-    leftCard = area.removeFromLeft (hasFiles ? 500 : (eqView != nullptr ? 300 : 380));
+    // Blocks with many controls (sitar, synth) give the knobs the room of a narrower card.
+    const auto numRelevant = std::count_if (controls.begin(), controls.end(), [] (const ParamControl& c) { return c.relevant; });
+    leftCard = area.removeFromLeft (hasFiles ? 500 : (eqView != nullptr || numRelevant > 12 ? 300 : 380));
     area.removeFromLeft (18);
     knobArea = area;
 
@@ -562,6 +595,11 @@ void BlockPanel::resized()
     remove.setBounds (top.removeFromRight (36).withSizeKeepingCentre (36, 36));
     titleArea = top;
     left.removeFromTop (10);
+    if (modelBox != nullptr)
+    {
+        modelBox->setBounds (left.removeFromTop (34));
+        left.removeFromTop (8);
+    }
 
     for (auto& fs : fileSlots)
     {
@@ -628,7 +666,8 @@ void BlockPanel::resized()
     const int count = (int) knobs.size();
     if (count == 0)
         return;
-    const int cellWidth = std::clamp (knobArea.getWidth() / count, 84, 150);
+    // Narrower cells for long lists keep it to two rows (three rows make tiny knobs).
+    const int cellWidth = std::clamp (knobArea.getWidth() / count, count > 8 ? 70 : 84, 150);
     const int perRow = std::max (1, knobArea.getWidth() / cellWidth);
     const int rows = (count + perRow - 1) / perRow;
     const int cellHeight = knobArea.getHeight() / rows;
