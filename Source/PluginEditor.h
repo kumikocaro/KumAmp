@@ -3,6 +3,9 @@
 #include "PluginProcessor.h"
 #include "UI/BlockPanel.h"
 #include "UI/EditorSections.h"
+#include "UI/AboutView.h"
+#include "UI/FieldView.h"
+#include "UI/SimpView.h"
 #include "UI/GridView.h"
 #include "UI/KumAmpLookAndFeel.h"
 #include "UI/PresetBrowser.h"
@@ -43,6 +46,14 @@ public:
     /** remember = store as this user's preference (not for tests / automatic fitting). */
     void setUiScale (float newScale, bool remember = true);
 
+    /** The CAMPO view: over everything under the header, on the same parameters. */
+    void showField (bool shouldShow);
+    kumamp::FieldView& getFieldView() noexcept { return fieldView; }
+    /** The SIMP view: the grid's blocks and values, explained, in the same place. */
+    void showSimp (bool shouldShow);
+    kumamp::SimpView& getSimpView() noexcept { return simpView; }
+    void showAbout (bool shouldShow);
+
     static constexpr int kDefaultWidth = 1500, kDefaultHeight = 880;   // logical size at 100 %
     static constexpr int kMinWidth = 1240, kMinHeight = 760;
     static constexpr int kMaxWidth = 2600, kMaxHeight = 1600;
@@ -80,11 +91,12 @@ private:
     void downloadTone3000Variant (std::shared_ptr<kumamp::ParamStore> ampStore, const kumamp::t3k::Tone& tone,
                                   const kumamp::t3k::Model& variant);
     void loadPreset (const juce::File& file);
+    void loadSimpPreset (int preset);
     void saveCurrentPreset();
     void setParameter (const juce::String& id, float value);
     int groupOfSelectedBlock() const;
 
-    kumamp::KumAmpLookAndFeel lookAndFeel;   // must outlive every child
+    juce::SharedResourcePointer<kumamp::KumAmpLookAndFeel> lookAndFeel;   // must outlive every child
     KumAmpAudioProcessor& kumProcessor;
     kumamp::GridEngine& engine;
 
@@ -104,6 +116,9 @@ private:
     Placeholder placeholder;
     kumamp::SettingsView settings;
     kumamp::PresetBrowser presetBrowser;
+    kumamp::FieldView fieldView;
+    kumamp::SimpView simpView;
+    kumamp::AboutView aboutView;
     kumamp::Tone3000Picker tone3000Picker;
     std::weak_ptr<kumamp::ParamStore> tone3000Target;   // amp block the picked model goes to
     juce::Array<kumamp::t3k::Model> tone3000Variants;   // all models of the tone being downloaded
@@ -112,6 +127,7 @@ private:
 
     juce::Rectangle<int> centreCard, centreColumn;
     int shownModelVersion = -1;
+    int activeTab = 0;
     juce::uint32 toastUntil = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KumAmpAudioProcessorEditor)

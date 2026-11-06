@@ -182,44 +182,59 @@ void GridView::paintTile (juce::Graphics& g, const GridNode& node, juce::Rectang
     const bool bypassed = store != nullptr && (store->isBypassed() || decoupled);
     const bool beingDragged = node.id == draggingNode;
     const auto colour = theme::categoryColour (type);
-    const float alpha = beingDragged ? 0.25f : (bypassed ? 0.45f : 1.0f);
+    const float alpha = beingDragged ? 0.25f : (bypassed && ! selected ? 0.55f : 1.0f);
 
-    if (selected && ! beingDragged)
-        for (int i = 3; i >= 1; --i)   // soft glow
-        {
-            g.setColour (colour.withAlpha (0.07f * (float) (4 - i)));
-            g.fillRoundedRectangle (r.expanded ((float) i * 3.0f), 12.0f + (float) i * 2.0f);
-        }
+    // Selected: black box. On: solid family colour. Off: only the outline, on the bone field.
+    if (selected)
+        g.setColour (theme::ink.withAlpha (alpha));
+    else
+        g.setColour (bypassed ? juce::Colours::transparentBlack : colour.withAlpha (alpha));
+    g.fillRect (r);
+    g.setColour (theme::ink.withAlpha (alpha));
+    g.drawRect (r, 1.5f);
 
-    g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.22f * alpha), r.getX(), r.getY(),
-                                             colour.withAlpha (0.08f * alpha), r.getX(), r.getBottom(), false));
-    g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (colour.withAlpha ((selected ? 1.0f : 0.75f) * alpha));
-    g.drawRoundedRectangle (r.reduced (0.75f), 10.0f, selected ? 2.0f : 1.5f);
-
+    const auto foreground = selected ? theme::bone : theme::ink.withAlpha (alpha);
     auto content = r.reduced (6.0f);
     const auto labelArea = content.removeFromBottom (std::min (34.0f, content.getHeight() * 0.42f));
-    theme::drawIcon (g, theme::iconFor (type), content.reduced (4.0f), colour.withAlpha (alpha), 1.8f);
+    theme::drawIcon (g, theme::iconFor (type), content.reduced (4.0f), selected && ! bypassed ? colour : foreground, 1.8f);
 
-    g.setColour (theme::text.withAlpha (alpha));
-    g.setFont (juce::FontOptions (r.getWidth() < 90.0f ? 13.0f : 15.0f));
+    g.setColour (foreground);
+    // Narrow tiles (long chains) shrink the name instead of breaking it in two.
+    g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, r.getWidth() * 0.21f), juce::Font::bold));
     juce::String label = nodeLabel (node);
     if (decoupled)      label << "\n(E2E)";
     else if (bypassed)  label << "\nOFF";
-    g.drawFittedText (label, labelArea.toNearestInt(), juce::Justification::centred, 2, 0.85f);
+    g.drawFittedText (label, labelArea.withX (r.getX() + 1.0f).withWidth (r.getWidth() - 2.0f).toNearestInt(), juce::Justification::centred, 2, 0.7f);
 }
 
 void GridView::paint (juce::Graphics& g)
 {
-    // Subtle dot grid (the editor paints the surrounding card).
+    // Bone field with engraved wavy lines and a ruler along the bottom.
     const auto bounds = getLocalBounds().toFloat();
-    g.saveState();
-    g.reduceClipRegion (getLocalBounds().reduced (2));
-    g.setColour (juce::Colours::white.withAlpha (0.035f));
-    for (float y = 14.0f; y < bounds.getHeight(); y += 18.0f)
-        for (float x = 14.0f; x < bounds.getWidth(); x += 18.0f)
-            g.fillRect (x, y, 1.5f, 1.5f);
-    g.restoreState();
+    g.fillAll (theme::bone);
+    constexpr int textureScale = 2;
+    if (fieldTexture.getWidth() != getWidth() * textureScale || fieldTexture.getHeight() != getHeight() * textureScale)
+    {
+        fieldTexture = juce::Image (juce::Image::ARGB, std::max (1, getWidth() * textureScale), std::max (1, getHeight() * textureScale), true);
+        juce::Graphics tg (fieldTexture);
+        tg.addTransform (juce::AffineTransform::scale ((float) textureScale));
+        tg.setColour (theme::ink.withAlpha (0.07f));
+        for (float y = -8.0f; y < bounds.getHeight() + 8.0f; y += 7.0f)
+        {
+            juce::Path line;
+            line.startNewSubPath (0.0f, y);
+            for (float x = 12.0f; x <= bounds.getWidth() + 12.0f; x += 12.0f)
+                line.lineTo (x, y + 2.2f * std::sin (x * 0.035f + y * 0.05f) + 1.6f * std::sin (x * 0.011f - y * 0.02f));
+            tg.strokePath (line, juce::PathStrokeType (0.8f));
+        }
+    }
+    g.drawImage (fieldTexture, bounds);
+
+    g.setColour (theme::ink);
+    g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    g.drawText (juce::CharPointer_UTF8 ("CADENA DE SE\xc3\x91" "AL"), getLocalBounds().reduced (14, 10).removeFromTop (18), juce::Justification::centredLeft);
+    for (int i = 0; i * 14 < getWidth() - 28; ++i)
+        g.fillRect (14 + i * 14, getHeight() - (i % 5 == 0 ? 12 : 8), 1, i % 5 == 0 ? 8 : 4);
 
     const auto layout = computeLayout();
     const auto& model = engine.getModel();
@@ -244,23 +259,16 @@ void GridView::paint (juce::Graphics& g)
                 cable.lineTo (b);
             else
             {
-                // Orthogonal with rounded corners, like a patch-bay.
+                // Orthogonal, like a circuit diagram.
                 const float midX = isJunction (*source) ? a.x + 10.0f : b.x - 10.0f;
-                const float r = std::min (12.0f, std::abs (b.y - a.y) * 0.5f);
-                const float dir = b.y > a.y ? 1.0f : -1.0f;
-                cable.lineTo (midX - r, a.y);
-                cable.quadraticTo (midX, a.y, midX, a.y + r * dir);
-                cable.lineTo (midX, b.y - r * dir);
-                cable.quadraticTo (midX, b.y, midX + r, b.y);
+                cable.lineTo (midX, a.y);
+                cable.lineTo (midX, b.y);
                 cable.lineTo (b);
             }
-            g.setColour (theme::cable.brighter (0.25f));
-            g.strokePath (cable, juce::PathStrokeType (2.0f));
+            g.setColour (theme::cable);
+            g.strokePath (cable, juce::PathStrokeType (1.5f));
             for (auto p : { a, b })
-            {
-                g.setColour (theme::textDim);
-                g.fillEllipse (p.x - 3.0f, p.y - 3.0f, 6.0f, 6.0f);
-            }
+                g.fillRect (p.x - 2.5f, p.y - 2.5f, 5.0f, 5.0f);
 
             markers.push_back ({ cable.getPointAlongPath (cable.getLength() * 0.5f), { in, node.id } });
         }
@@ -273,11 +281,11 @@ void GridView::paint (juce::Graphics& g)
             const auto c = markers[(size_t) i].centre;
             const bool hot = i == hoveredMarker;
             const float radius = hot ? kMarkerRadius + 2.0f : kMarkerRadius - 3.0f;
-            g.setColour (hot ? theme::accent : theme::panelRaised.brighter (0.2f));
-            g.fillEllipse (c.x - radius, c.y - radius, 2 * radius, 2 * radius);
+            g.setColour (hot ? theme::accent : theme::ink);
+            g.fillRect (c.x - radius, c.y - radius, 2 * radius, 2 * radius);
             if (hot || ! dragHover)
                 theme::drawIcon (g, theme::Icon::Plus, juce::Rectangle<float> (2 * radius, 2 * radius).withCentre (c).reduced (radius * 0.35f),
-                                 hot ? juce::Colours::white : theme::textDim, 2.0f);
+                                 hot ? theme::ink : theme::bone, 2.0f);
         }
 
     // Nodes.
@@ -288,20 +296,18 @@ void GridView::paint (juce::Graphics& g)
 
         if (isJunction (node))
         {
-            g.setColour (theme::panel);
+            g.setColour (selected ? theme::ink : theme::bone);
             g.fillEllipse (r);
-            g.setColour (selected ? theme::accentLight : theme::textDim);
-            g.drawEllipse (r.reduced (1.0f), 1.8f);
-            theme::drawIcon (g, theme::Icon::Plus, r.reduced (5.0f), selected ? theme::accentLight : theme::text, 1.8f);
+            g.setColour (theme::ink);
+            g.drawEllipse (r.reduced (1.0f), 1.5f);
+            theme::drawIcon (g, theme::Icon::Plus, r.reduced (5.0f), selected ? theme::bone : theme::ink, 1.8f);
         }
         else if (node.kind == NodeKind::Input || node.kind == NodeKind::Output)
         {
-            g.setColour (theme::panelRaised);
-            g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-            g.setColour (theme::border.brighter (0.4f));
-            g.drawRoundedRectangle (r.reduced (0.75f), r.getHeight() * 0.5f, 1.5f);
-            g.setColour (theme::text);
-            g.setFont (juce::FontOptions (17.0f));
+            g.setColour (theme::ink);
+            g.fillRect (r);
+            g.setColour (theme::bone);
+            g.setFont (theme::mono (15.0f, true));
             g.drawText (nodeLabel (node), r, juce::Justification::centred);
         }
         else

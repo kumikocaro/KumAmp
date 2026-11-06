@@ -15,6 +15,8 @@
 
 namespace kumamp
 {
+class FusionBus;
+
 /** GUI / message thread -> audio thread. */
 struct EngineCommand
 {
@@ -136,6 +138,9 @@ public:
     void setTempo (double bpm) noexcept { if (bpm > 1.0) tempoBpm.store (bpm, std::memory_order_relaxed); }
     double getTempo() const noexcept    { return tempoBpm.load (std::memory_order_relaxed); }
     /** What every block's note detectors hear, as a linear gain. */
+    /** Before anything is compiled; the bus must outlive this engine's plans. */
+    void setFusionBus (FusionBus* bus) noexcept { fusionBus = bus; }
+
     void setDetectionGain (float gain) noexcept { detectionGain.store (gain, std::memory_order_relaxed); }
 
 private:
@@ -168,6 +173,7 @@ private:
     double sampleRate = 48000.0;
     int maxBlock = 512;
     bool prepared = false;
+    FusionBus* fusionBus = nullptr;
 
     // Shared -------------------------------------------------------------------
     RTObjectPublisher<RenderPlan> plans;

@@ -18,7 +18,10 @@ public:
     HeaderBar();
 
     std::function<void (int)> onTabChanged;
+    std::function<void()> onFieldClicked, onSimpClicked, onAboutClicked;
     void setActiveTab (int tab);
+    /** The buttons that go to the CAMPO and SIMP views and back. */
+    void setViewButtons (bool fieldOpen, bool simpOpen);
     void setStats (double cpuProportion, double sampleRate, int blockSize, bool running, double bpm);
 
     void paint (juce::Graphics&) override;
@@ -32,6 +35,8 @@ private:
     };
 
     std::array<std::unique_ptr<Tab>, 5> tabs;
+    juce::TextButton fieldButton { "Campo" }, simpButton { "Simp" };
+    IconButton aboutButton { theme::Icon::Info, "Acerca de KumAmp" };
     juce::Rectangle<int> tabArea, statsArea;
     juce::String cpuText, rateText, blockText, bpmText;
     bool audioRunning = false;

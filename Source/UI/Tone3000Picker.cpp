@@ -55,7 +55,7 @@ void Tone3000Picker::paintListBoxItem (int row, juce::Graphics& g, int width, in
     if (selected)
     {
         g.setColour (theme::accent.withAlpha (0.28f));
-        g.fillRoundedRectangle (area.toFloat(), 8.0f);
+        g.fillRect (area.toFloat());
     }
     area.reduce (14, 0);
     const auto& m = models.getReference (row);

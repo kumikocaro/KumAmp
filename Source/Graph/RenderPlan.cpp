@@ -1,4 +1,5 @@
 #include "RenderPlan.h"
+#include "FusionBus.h"
 #include "DSPBlock.h"
 #include "../DSP/Routing/RoutingParams.h"
 
@@ -417,7 +418,15 @@ void RenderPlan::process (const float* const* inputs, int numInputs,
                 break;
 
             case OpType::ProcessBlock:
+                if (fusionBus != nullptr)
+                    fusionBus->beforeBlock (op.block->getId(), channel (op.dst, 0), channel (op.dst, 1), numSamples);
                 op.block->process (channel (op.dst, 0), channel (op.dst, 1), numSamples);
+                if (fusionBus != nullptr)
+                {
+                    fusionBus->afterBlock (op.block->getId(), channel (op.dst, 0), channel (op.dst, 1), numSamples);
+                    if (const float* direct = op.block->getDirectOutput (0))
+                        fusionBus->afterBlock (FusionBus::kDirectSlot, direct, op.block->getDirectOutput (1), numSamples);
+                }
                 break;
 
             case OpType::SplitScale:

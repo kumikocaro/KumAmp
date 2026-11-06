@@ -10,8 +10,8 @@ namespace
     void drawTitle (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, const juce::String& subtitle)
     {
         g.setColour (theme::text);
-        g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
-        g.drawText (title, area.removeFromTop (28), juce::Justification::centredLeft);
+        g.setFont (theme::display (20.0f));
+        g.drawText (title.toUpperCase(), area.removeFromTop (28), juce::Justification::centredLeft);
         g.setColour (theme::textDim);
         g.setFont (juce::FontOptions (14.0f));
         g.drawText (subtitle, area.removeFromTop (20), juce::Justification::centredLeft);
@@ -118,12 +118,12 @@ void SettingsView::paint (juce::Graphics& g)
         const auto bar = detectLevelArea.withHeight (14).toFloat();
         const auto xOf = [&] (float db) { return bar.getX() + bar.getWidth() * juce::jlimit (0.0f, 1.0f, (db - kLowDb) / -kLowDb); };
         g.setColour (theme::panelRaised);
-        g.fillRoundedRectangle (bar, 4.0f);
+        g.fillRect (bar);
         g.setColour (theme::good.withAlpha (0.18f));
         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (kWeakDb), bar.getY(), xOf (kHotDb), bar.getBottom()));
         const auto colour = detectionDb < kGateDb ? theme::bad : detectionDb < kWeakDb ? theme::warn : detectionDb < kHotDb ? theme::good : theme::warn;
         g.setColour (colour);
-        g.fillRoundedRectangle (bar.withRight (xOf (detectionDb)), 4.0f);
+        g.fillRect (bar.withRight (xOf (detectionDb)));
         g.setColour (theme::text);
         g.fillRect (xOf (detectionHoldDb) - 1.0f, bar.getY(), 2.0f, bar.getHeight());
 
@@ -152,11 +152,11 @@ void SettingsView::paint (juce::Graphics& g)
     // Live activity: note, velocity bar, bend.
     auto a = activityArea;
     g.setColour (theme::panelRaised);
-    g.fillRoundedRectangle (a.toFloat(), 10.0f);
+    g.fillRect (a.toFloat());
     a.reduce (16, 10);
     const bool playing = note >= 0;
     g.setColour (playing ? theme::good : theme::textDim);
-    g.setFont (juce::FontOptions (34.0f, juce::Font::bold));
+    g.setFont (theme::display (34.0f));
     g.drawText (playing ? juce::String (noteName (note)) + juce::String (noteOctave (note)) : juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94")),
                 a.removeFromLeft (110), juce::Justification::centredLeft);
     auto info = a.removeFromTop (a.getHeight() / 2);
@@ -166,13 +166,13 @@ void SettingsView::paint (juce::Graphics& g)
                 info, juce::Justification::centredLeft);
     auto bar = a.reduced (0, 8).withWidth (std::min (a.getWidth(), 260));
     g.setColour (theme::border);
-    g.fillRoundedRectangle (bar.toFloat(), 4.0f);
+    g.fillRect (bar.toFloat());
     if (playing)
     {
         const float centre = (float) bar.getCentreX();
         const float x = centre + juce::jlimit (-1.0f, 1.0f, bend / 2.0f) * (float) bar.getWidth() * 0.5f;
         g.setColour (theme::accentLight);
-        g.fillRoundedRectangle (juce::Rectangle<float> (std::min (centre, x), (float) bar.getY(), std::abs (x - centre) + 2.0f, (float) bar.getHeight()), 4.0f);
+        g.fillRect (juce::Rectangle<float> (std::min (centre, x), (float) bar.getY(), std::abs (x - centre) + 2.0f, (float) bar.getHeight()));
     }
     g.setColour (theme::textDim);
     g.setFont (juce::FontOptions (12.0f));

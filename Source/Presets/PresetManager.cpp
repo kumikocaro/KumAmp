@@ -86,18 +86,10 @@ juce::Result PresetManager::save (const juce::String& name, const juce::String& 
     if (const auto dir = file.getParentDirectory(); ! dir.createDirectory())
         return juce::Result::fail ("No se pudo crear la carpeta " + dir.getFullPathName());
 
-    juce::ValueTree preset (kPresetTag);
-    preset.setProperty ("version", kFormatVersion, nullptr);
-    preset.setProperty ("name", name.trim(), nullptr);
-    preset.setProperty ("author", author.trim(), nullptr);
-    preset.setProperty ("comment", comment.trim(), nullptr);
-    preset.setProperty ("created", juce::Time::getCurrentTime().toISO8601 (true), nullptr);
-
     juce::ValueTree globals (kGlobalsTag);
     for (const auto& id : globalParameterIds())
         if (auto* value = parameters.getRawParameterValue (id))
             globals.setProperty (id, value->load(), nullptr);
-    preset.appendChild (globals, nullptr);
 
     // Model / IR paths: keep the absolute path and add one relative to the preset.
     auto grid = engine.saveState();
@@ -110,14 +102,31 @@ juce::Result PresetManager::save (const juce::String& name, const juce::String& 
             const juce::File model (store.getProperty (key).toString());
             store.setProperty ("rel_" + key, model.getRelativePathFrom (file.getParentDirectory()).replaceCharacter ('\\', '/'), nullptr);
         }
-    preset.appendChild (grid, nullptr);
+
+    const auto result = write (file, name, author, comment, globals, grid);
+    if (result.wasOk())
+    {
+        currentName = name.trim();
+        currentFile = file;
+    }
+    return result;
+}
+
+juce::Result PresetManager::write (const juce::File& file, const juce::String& name, const juce::String& author,
+                                   const juce::String& comment, const juce::ValueTree& globals, const juce::ValueTree& grid)
+{
+    juce::ValueTree preset (kPresetTag);
+    preset.setProperty ("version", kFormatVersion, nullptr);
+    preset.setProperty ("name", name.trim(), nullptr);
+    preset.setProperty ("author", author.trim(), nullptr);
+    preset.setProperty ("comment", comment.trim(), nullptr);
+    preset.setProperty ("created", juce::Time::getCurrentTime().toISO8601 (true), nullptr);
+    preset.appendChild (globals.createCopy(), nullptr);
+    preset.appendChild (grid.createCopy(), nullptr);
 
     auto xml = preset.createXml();
     if (xml == nullptr || ! xml->writeTo (file))
         return juce::Result::fail ("No se pudo escribir " + file.getFullPathName());
-
-    currentName = name.trim();
-    currentFile = file;
     return juce::Result::ok();
 }
 

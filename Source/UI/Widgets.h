@@ -26,7 +26,7 @@ public:
         if (highlighted || down)
         {
             g.setColour (theme::panelRaised.brighter (down ? 0.15f : 0.05f));
-            g.fillRoundedRectangle (area, 8.0f);
+            g.fillRect (area);
         }
         const auto colour = ! isEnabled() ? theme::textDim.withAlpha (0.35f)
                                           : (getToggleState() ? theme::accentLight : theme::text.withAlpha (0.85f));
@@ -46,18 +46,17 @@ public:
     void paintButton (juce::Graphics& g, bool highlighted, bool) override
     {
         const auto area = getLocalBounds().toFloat().reduced (2.0f);
-        const auto circle = area.withSizeKeepingCentre (std::min (area.getWidth(), area.getHeight()),
+        const auto square = area.withSizeKeepingCentre (std::min (area.getWidth(), area.getHeight()),
                                                         std::min (area.getWidth(), area.getHeight()));
         const bool on = getToggleState();
-        if (on)
+        g.setColour (on ? theme::accent : theme::panel);
+        g.fillRect (square);
+        if (! on)
         {
-            g.setColour (theme::accent.withAlpha (0.25f));
-            g.fillEllipse (circle.expanded (2.0f));
+            g.setColour (highlighted ? theme::text : theme::border);
+            g.drawRect (square, 1.0f);
         }
-        g.setColour (on ? theme::accent : theme::panelRaised.brighter (highlighted ? 0.1f : 0.0f));
-        g.fillEllipse (circle);
-        g.setColour (on ? juce::Colours::white : theme::textDim);
-        theme::drawIcon (g, theme::Icon::Power, circle.reduced (circle.getWidth() * 0.22f), on ? juce::Colours::white : theme::textDim, 2.0f);
+        theme::drawIcon (g, theme::Icon::Power, square.reduced (square.getWidth() * 0.24f), on ? theme::ink : theme::textDim, 2.0f);
     }
 };
 
@@ -83,7 +82,7 @@ public:
         {
             auto labels = area.removeFromBottom (16.0f);
             g.setColour (theme::textDim);
-            g.setFont (juce::FontOptions (11.0f));
+            g.setFont (theme::mono (10.0f));
             const char* marks[] = { "-6", "-12", "-24", "-48" };
             const float w = labels.getWidth() / 4.0f;
             for (int i = 0; i < 4; ++i)
@@ -100,14 +99,17 @@ public:
         {
             const auto bar = juce::Rectangle<float> (x, area.getY(), barWidth, area.getHeight());
             g.setColour (theme::panelRaised);
-            g.fillRoundedRectangle (bar, 2.0f);
+            g.fillRect (bar);
 
             const float db = juce::Decibels::gainToDecibels (levels[(size_t) c], -60.0f);
             const float proportion = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
             const auto lit = bar.withTop (bar.getBottom() - bar.getHeight() * proportion);
-            g.setGradientFill (juce::ColourGradient (theme::good, bar.getX(), bar.getBottom(),
-                                                     db > -3.0f ? theme::bad : theme::good.brighter (0.2f), bar.getX(), bar.getY(), false));
-            g.fillRoundedRectangle (lit, 2.0f);
+            g.setColour (theme::text);
+            g.fillRect (lit);
+            // The last 6 dB go red.
+            const auto hot = bar.withBottom (bar.getY() + bar.getHeight() * 0.1f);
+            g.setColour (theme::accent);
+            g.fillRect (lit.getIntersection (hot));
             x += barWidth + gap;
         }
     }

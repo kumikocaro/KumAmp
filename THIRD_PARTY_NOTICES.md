@@ -20,3 +20,8 @@ TONE3000 es un servicio de terceros: los tonos que descargas tienen la licencia 
 
 El código fuente completo de KumAmp, con las instrucciones para compilarlo, está en
 https://github.com/kumikocaro/KumAmp
+
+## Tipografías de la interfaz
+
+- **Jost** — Copyright 2020 The Jost Project Authors (https://github.com/indestructible-type/Jost). SIL Open Font License 1.1, ver [`Resources/Fonts/OFL-Jost.txt`](Resources/Fonts/OFL-Jost.txt). Se incluyen instancias estáticas (pesos 400, 650 y 850) del subconjunto latino.
+- **IBM Plex Mono** — Copyright 2017 IBM Corp. SIL Open Font License 1.1, ver [`Resources/Fonts/OFL-IBMPlexMono.txt`](Resources/Fonts/OFL-IBMPlexMono.txt). Se incluyen los pesos 400 y 500 del subconjunto latino.

@@ -4,6 +4,7 @@
 #include "DSP/Midi/GuitarToMidi.h"
 #include "DSP/Pitch/PitchShifterBlock.h"
 #include "Engine/GridEngine.h"
+#include "Field/FieldSession.h"
 #include "Presets/PresetManager.h"
 #include "Tone3000/Tone3000.h"
 #include "Tuner/Tuner.h"
@@ -53,6 +54,9 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     kumamp::GridEngine& getEngine() noexcept { return engine; }
+    kumamp::FieldSession& getField() noexcept { return field; }
+    /** Sound from the CAMPO's chain instead of the grid's, crossfaded once its models are in. */
+    void setFieldActive (bool shouldBeActive);
     kumamp::Tuner& getTuner() noexcept { return tuner; }
     juce::AudioProcessorValueTreeState& getParameters() noexcept { return parameters; }
     kumamp::PresetManager& getPresets() noexcept { return presets; }
@@ -91,6 +95,12 @@ private:
     void generateGuitarMidi (const float* left, const float* right, int numSamples, juce::MidiBuffer& out) noexcept;
 
     kumamp::GridEngine engine;
+    kumamp::FieldSession field { engine };
+    std::atomic<bool> fieldAudible { false };
+    bool fieldRequested = false;
+    juce::uint32 fieldDeadline = 0;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> fieldFade;
+    juce::AudioBuffer<float> fieldBuffer;
     kumamp::Tuner tuner;
     kumamp::NoiseGateBlock inputGate { 1 };
     kumamp::PitchShifterBlock globalPitch { 2 };

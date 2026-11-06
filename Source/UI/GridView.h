@@ -55,6 +55,7 @@ public:
     void itemDropped (const SourceDetails&) override;
 
 private:
+    juce::Image fieldTexture;   // the engraved lines of the bone field, rebuilt on resize
     struct Layout { int columns = 1, rows = 1; float cellWidth = 0, cellHeight = 0; juce::Point<float> origin; };
     struct InsertMarker { juce::Point<float> centre; InsertTarget target; };
 

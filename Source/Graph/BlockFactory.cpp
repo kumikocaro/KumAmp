@@ -62,6 +62,7 @@ std::shared_ptr<ParamStore> createStore (BlockType type, StoreId id)
         case BlockType::AnalogDelay:     return std::make_shared<AnalogDelayBlock> (id);
         case BlockType::DigitalDelay:    return std::make_shared<DigitalDelayBlock> (id);
         case BlockType::ReverseDelay:    return std::make_shared<ReverseDelayBlock> (id);
+        case BlockType::RepeatPercussion: return std::make_shared<RepeatPercussionBlock> (id);
         case BlockType::PlateReverb:     return std::make_shared<PlateReverbBlock> (id);
         case BlockType::SpringReverb:    return std::make_shared<SpringReverbBlock> (id);
         case BlockType::HallReverb:      return std::make_shared<HallReverbBlock> (id);

@@ -1,4 +1,5 @@
 #include "PresetBrowser.h"
+#include "../Presets/FactoryPresets.h"
 #include "UserSettings.h"
 
 #include <map>
@@ -205,6 +206,8 @@ void PresetBrowser::visibilityChanged()
 void PresetBrowser::refresh()
 {
     const auto previous = selectedPreset() != nullptr ? selectedPreset()->file : manager.getCurrentFile();
+    if (manager.getFolder() == PresetManager::getDefaultFolder())
+        factorypresets::install (manager.getFolder());
     all = manager.scan();
 
     const auto typed = categoryField.getText();
@@ -260,7 +263,7 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, int
     if (selected)
     {
         g.setColour (theme::accent.withAlpha (0.25f));
-        g.fillRoundedRectangle (area.toFloat(), 8.0f);
+        g.fillRect (area.toFloat());
     }
     area.reduce (12, 0);
 

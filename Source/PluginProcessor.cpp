@@ -165,6 +165,10 @@ void KumAmpAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 {
     maxBlock = std::max (1, samplesPerBlock);
     engine.prepare (sampleRate, maxBlock);
+    field.prepare (sampleRate, maxBlock);
+    fieldBuffer.setSize (2, maxBlock);
+    fieldFade.reset (sampleRate, 0.04);
+    fieldFade.setCurrentAndTargetValue (fieldAudible.load() ? 1.0f : 0.0f);
     tuner.prepare (sampleRate);
     inputGate.prepare (sampleRate, maxBlock);
     globalPitch.prepare (sampleRate, maxBlock);
@@ -388,7 +392,30 @@ void KumAmpAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         engine.setMacroValue ((int) i, ccMacro[i] >= 0.0f ? ccMacro[i] : paramValue);
     }
 
-    engine.process (buffer.getArrayOfReadPointers(), std::min (numOut, 2), buffer.getArrayOfWritePointers(), numOut, numSamples);
+    // Grid or CAMPO: only the one you hear runs, except during the crossfade between them.
+    const float detection = juce::Decibels::decibelsToGain (detectSensitivity->load (std::memory_order_relaxed));
+    fieldFade.setTargetValue (fieldAudible.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+    if (fieldFade.isSmoothing() && numSamples <= fieldBuffer.getNumSamples() && numOut >= 2)
+    {
+        fieldBuffer.copyFrom (0, 0, buffer, 0, 0, numSamples);
+        fieldBuffer.copyFrom (1, 0, buffer, 1, 0, numSamples);
+        engine.process (buffer.getArrayOfReadPointers(), 2, buffer.getArrayOfWritePointers(), numOut, numSamples);
+        field.process (fieldBuffer.getArrayOfWritePointers(), 2, numSamples, engine.getTempo(), detection);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float mix = fieldFade.getNextValue();
+            for (int ch = 0; ch < 2; ++ch)
+                buffer.setSample (ch, i, buffer.getSample (ch, i) * (1.0f - mix) + fieldBuffer.getSample (ch, i) * mix);
+        }
+    }
+    else
+    {
+        fieldFade.skip (numSamples);
+        if (fieldFade.getCurrentValue() > 0.5f)
+            field.process (buffer.getArrayOfWritePointers(), numOut, numSamples, engine.getTempo(), detection);
+        else
+            engine.process (buffer.getArrayOfReadPointers(), std::min (numOut, 2), buffer.getArrayOfWritePointers(), numOut, numSamples);
+    }
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (outputGainDb->load (std::memory_order_relaxed)));
     applySmoothedGain (buffer, numOut, outputGain);
@@ -411,9 +438,31 @@ void KumAmpAudioProcessor::selectScene (int index)
     }
 }
 
+void KumAmpAudioProcessor::setFieldActive (bool shouldBeActive)
+{
+    fieldRequested = shouldBeActive;
+    if (shouldBeActive)
+    {
+        field.syncWithGrid();
+        fieldDeadline = juce::Time::getMillisecondCounter() + 3000;
+    }
+    else if (fieldAudible.exchange (false))
+    {
+        engine.pushCommand ({ kumamp::EngineCommand::Type::ResetAllBlocks });   // no stale tails coming back
+    }
+}
+
 void KumAmpAudioProcessor::timerCallback()
 {
     engine.runMessageThreadTasks();
+    field.runMessageThreadTasks();
+
+    // Into the CAMPO once its chain has its models (the wait has a limit: a stopped host never loads).
+    if (fieldRequested && ! fieldAudible.load() && (field.isChainReady() || juce::Time::getMillisecondCounter() > fieldDeadline))
+    {
+        field.resetAudio();
+        fieldAudible.store (true);
+    }
 
     // Reflect a MIDI Program Change in the host-visible scene parameter.
     if (const int scene = pendingSceneFromMidi.exchange (-1); scene >= 0)
@@ -433,6 +482,7 @@ void KumAmpAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::ValueTree state (kStateTag);
     state.appendChild (parameters.copyState(), nullptr);
     state.appendChild (engine.saveState(), nullptr);
+    state.appendChild (field.saveState(), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -452,6 +502,10 @@ void KumAmpAudioProcessor::setStateInformation (const void* data, int sizeInByte
         parameters.replaceState (params);
 
     engine.loadState (state.getChildWithName ("KumAmpGrid"));
+
+    if (const auto fieldState = state.getChildWithName ("FieldSession"); fieldState.isValid())
+        field.loadState (fieldState);
+    setFieldActive ((bool) parameters.state.getProperty ("fieldViewOpen", false));
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

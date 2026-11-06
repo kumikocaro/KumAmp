@@ -1,9 +1,34 @@
 #include "Theme.h"
+
+#include <KumAmpFontData.h>
 #include <algorithm>
 #include <cmath>
 
 namespace kumamp::theme
 {
+Typefaces::Typefaces()
+{
+    using namespace KumAmpFontData;
+    const auto load = [] (const char* data, int size) { return juce::Typeface::createSystemTypefaceFor (data, (size_t) size); };
+    regular    = load (JostRegular_ttf, JostRegular_ttfSize);
+    semiBold   = load (JostSemiBold_ttf, JostSemiBold_ttfSize);
+    black      = load (JostBlack_ttf, JostBlack_ttfSize);
+    mono       = load (IBMPlexMonoRegular_ttf, IBMPlexMonoRegular_ttfSize);
+    monoMedium = load (IBMPlexMonoMedium_ttf, IBMPlexMonoMedium_ttfSize);
+}
+
+juce::FontOptions display (float height)
+{
+    const juce::SharedResourcePointer<Typefaces> typefaces;
+    return juce::FontOptions (typefaces->black).withHeight (height).withHorizontalScale (0.86f).withKerningFactor (-0.02f);
+}
+
+juce::FontOptions mono (float height, bool medium)
+{
+    const juce::SharedResourcePointer<Typefaces> typefaces;
+    return juce::FontOptions (medium ? typefaces->monoMedium : typefaces->mono).withHeight (height);
+}
+
 Icon iconFor (BlockType type) noexcept
 {
     switch (type)
@@ -34,7 +59,8 @@ Icon iconFor (BlockType type) noexcept
         case BlockType::TapeDelay:
         case BlockType::AnalogDelay:
         case BlockType::DigitalDelay:
-        case BlockType::ReverseDelay:    return Icon::Delay;
+        case BlockType::ReverseDelay:
+        case BlockType::RepeatPercussion: return Icon::Delay;
         case BlockType::PlateReverb:
         case BlockType::SpringReverb:
         case BlockType::HallReverb:
@@ -56,7 +82,7 @@ const std::vector<PaletteGroup>& paletteGroups()
         { "IR",         Icon::Speaker,  { BlockType::IrLoader } },
         { "Modulation", Icon::Sine,     { BlockType::Chorus, BlockType::Flanger, BlockType::Phaser, BlockType::Tremolo,
                                           BlockType::Rotary, BlockType::Univibe, BlockType::Bitcrusher } },
-        { "Delay",      Icon::Delay,    { BlockType::DigitalDelay, BlockType::AnalogDelay, BlockType::TapeDelay, BlockType::ReverseDelay } },
+        { "Delay",      Icon::Delay,    { BlockType::DigitalDelay, BlockType::AnalogDelay, BlockType::TapeDelay, BlockType::ReverseDelay, BlockType::RepeatPercussion } },
         { "Reverb",     Icon::Reverb,   { BlockType::PlateReverb, BlockType::HallReverb, BlockType::SpringReverb,
                                           BlockType::ShimmerReverb, BlockType::CloudReverb } },
         { "Utility",    Icon::Utility,  { BlockType::Volume } },
@@ -233,6 +259,17 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
                 const float w = std::sin ((float) i / 40.0f * juce::MathConstants<float>::twoPi * 1.5f);
                 p.lineTo (P (x, 12.0f - 7.0f * std::tanh (2.6f * w) / std::tanh (2.6f)));
             }
+            break;
+        case Icon::Bolt:
+            p.startNewSubPath (P (14, 2));
+            p.lineTo (P (5, 13.5f)); p.lineTo (P (11, 13.5f)); p.lineTo (P (9.5f, 22));
+            p.lineTo (P (19, 10)); p.lineTo (P (13, 10));
+            p.closeSubPath();
+            break;
+        case Icon::Note:   // eighth note
+            p.addEllipse (juce::Rectangle<float> (P (4, 16), P (11, 21.5f)));
+            p.startNewSubPath (P (11, 18.5f)); p.lineTo (P (11, 3));
+            p.quadraticTo (P (12, 8), P (18.5f, 9.5f));
             break;
         case Icon::Expand:
             p.startNewSubPath (P (14, 4));  p.lineTo (P (20, 4));  p.lineTo (P (20, 10));

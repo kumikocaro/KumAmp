@@ -26,10 +26,10 @@ namespace
 void BlockPanel::Pill::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (theme::panelRaised);
-    g.fillRoundedRectangle (area, area.getHeight() * 0.5f);
+    g.setColour (theme::border);
+    g.fillRect (area.withTop (area.getBottom() - 1.0f));
     g.setColour (theme::text);
-    g.setFont (juce::FontOptions (std::min (text.length() > 9 ? 14.0f : 17.0f, area.getHeight() * 0.62f)));
+    g.setFont (theme::mono (std::min (text.length() > 9 ? 12.0f : 14.0f, area.getHeight() * 0.62f)));
     g.drawText (text, area, juce::Justification::centred);
 }
 
@@ -438,9 +438,10 @@ void BlockPanel::setStore (std::shared_ptr<ParamStore> newStore)
             addAndMakeVisible (pill);
         }
 
-        control.name = std::make_unique<juce::Label> (juce::String(), paramInfo.name);
+        control.name = std::make_unique<juce::Label> (juce::String(), juce::String (paramInfo.name).toUpperCase());
         control.name->setJustificationType (juce::Justification::centred);
-        control.name->setFont (juce::FontOptions (17.0f));
+        control.name->setColour (juce::Label::textColourId, theme::textDim);
+        control.name->setFont (theme::mono (12.0f));
         addAndMakeVisible (*control.name);
         controls.push_back (std::move (control));
     }
@@ -528,16 +529,12 @@ void BlockPanel::paint (juce::Graphics& g)
     theme::drawCard (g, getLocalBounds().toFloat());
 
     // Left card.
-    g.setColour (theme::panelRaised.withAlpha (0.45f));
-    g.fillRoundedRectangle (leftCard.toFloat(), 12.0f);
     g.setColour (theme::border);
-    g.drawRoundedRectangle (leftCard.toFloat().reduced (0.5f), 12.0f, 1.0f);
+    g.drawRect (leftCard.toFloat(), 1.0f);
 
     // Output meter card.
-    g.setColour (theme::panelRaised.withAlpha (0.45f));
-    g.fillRoundedRectangle (meterCard.toFloat(), 12.0f);
     g.setColour (theme::border);
-    g.drawRoundedRectangle (meterCard.toFloat().reduced (0.5f), 12.0f, 1.0f);
+    g.drawRect (meterCard.toFloat(), 1.0f);
     g.setColour (theme::text);
     g.setFont (juce::FontOptions (17.0f, juce::Font::bold));
     g.drawText ("OUT", meterCard.withHeight (40), juce::Justification::centred);
@@ -553,12 +550,12 @@ void BlockPanel::paint (juce::Graphics& g)
     // Title: "Name - Type".
     const auto type = store->getType();
     g.setColour (theme::text);
-    g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
-    const juce::String title = juce::String (store->getName());
+    g.setFont (theme::display (24.0f));
+    const juce::String title = juce::String (store->getName()).toUpperCase();
     g.drawText (title, titleArea, juce::Justification::centredLeft);
     const int tw = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), title + "  ");
     g.setColour (theme::textDim);
-    g.setFont (juce::FontOptions (16.0f));
+    g.setFont (theme::mono (12.0f));
     if (getBlockTypeInfo (type).displayName != store->getName())
         g.drawText (juce::String ("(") + getBlockTypeInfo (type).displayName + ")", titleArea.withTrimmedLeft (tw),
                     juce::Justification::centredLeft);
@@ -566,13 +563,13 @@ void BlockPanel::paint (juce::Graphics& g)
     // Chips.
     auto chipRow = chipsArea;
     g.setColour (theme::textDim);
-    g.setFont (juce::FontOptions (16.0f));
-    g.drawText ("Tipo:", chipRow.removeFromLeft (52), juce::Justification::centredLeft);
+    g.setFont (theme::mono (11.0f));
+    g.drawText ("TIPO //", chipRow.removeFromLeft (56), juce::Justification::centredLeft);
     const auto colour = theme::categoryColour (type);
     for (size_t i = 0; i < chips.size(); ++i)
     {
         const juce::String text (chips[i]);
-        const int w = juce::GlyphArrangement::getStringWidthInt (juce::Font (juce::FontOptions (13.0f)), text) + 26;
+        const int w = juce::GlyphArrangement::getStringWidthInt (juce::Font (theme::mono (11.0f)), text) + 22;
         if (w > chipRow.getWidth())
             break;
         const auto chipColour = i == 0 ? (text == "End-to-End" || text.startsWith ("Desacoplado") ? theme::warn : theme::good)
@@ -676,7 +673,7 @@ void BlockPanel::resized()
             auto stack = column.withSizeKeepingCentre (column.getWidth(), rowHeight * perColumn);
             auto row = stack.withY (stack.getY() + (i % perColumn) * rowHeight).withHeight (rowHeight);
             c->name->setBounds (row.removeFromTop (22));
-            c->name->setFont (juce::FontOptions (14.0f));
+            c->name->setFont (theme::mono (11.0f));
             if (c->combo != nullptr)  c->combo->setBounds (row.removeFromTop (34).reduced (4, 0));
             if (c->toggle != nullptr) c->toggle->setBounds (row.removeFromTop (34).reduced (4, 0));
         }
@@ -703,7 +700,7 @@ void BlockPanel::resized()
         auto pillArea = cell.removeFromBottom (pillHeight);
         auto nameArea = cell.removeFromBottom (nameHeight);
         c.name->setBounds (nameArea);
-        c.name->setFont (juce::FontOptions (rows > 1 ? 14.0f : 17.0f));
+        c.name->setFont (theme::mono (rows > 1 ? 11.0f : 12.0f));
         const int knob = std::min (cell.getWidth(), cell.getHeight());
         c.slider->setBounds (cell.withSizeKeepingCentre (knob, knob));
         c.value->setBounds (pillArea.withSizeKeepingCentre (std::min (pillArea.getWidth() + 8, 128), pillHeight));

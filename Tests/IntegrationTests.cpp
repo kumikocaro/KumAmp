@@ -12,6 +12,10 @@
 #include "Graph/BlockFactory.h"
 #include "Engine/GridEngine.h"
 #include "Presets/PresetManager.h"
+#include "Presets/FactoryPresets.h"
+#include "Field/FieldSession.h"
+#include "DSP/Pitch/SitarBlock.h"
+#include "UI/SimpView.h"
 #include "Tone3000/Tone3000.h"
 #include "DSP/Time/DelayBlocks.h"
 #include "Tuner/Tuner.h"
@@ -671,6 +675,7 @@ struct PresetTestProcessor final : public juce::AudioProcessor
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "pitch_semitones", 1 }, "St", NormalisableRange<float> { -12.0f, 12.0f, 1.0f }, 0.0f));
         layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "pitch_instrument", 1 }, "Instr", StringArray { "Guitarra", "Bajo" }, 0));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "output_gain", 1 }, "Out", NormalisableRange<float> { -24.0f, 12.0f, 0.1f }, 0.0f));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "input_gain", 1 }, "In", NormalisableRange<float> { -24.0f, 24.0f, 0.1f }, 0.0f));
         return layout;
     }
     const juce::String getName() const override { return "test"; }
@@ -1048,6 +1053,483 @@ void testReplaceBlock()
            && engine.getStore (back->store)->getType() == BlockType::Chorus);
 }
 
+void renderField (FieldSession& field, std::vector<float>& left, std::vector<float>& right, double seconds, float gain = 0.25f)
+{
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    const int blocks = (int) (seconds * 48000.0 / kBlock);
+    double phase = 0.0;
+    left.clear(); right.clear();
+    for (int b = 0; b < blocks; ++b)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            phase += 220.0 / 48000.0;
+            const float x = gain * std::sin ((float) phase * 6.2831853f) * std::exp (-3.0f * std::fmod ((float) (b * kBlock + i) / 48000.0f, 0.5f));
+            buffer.setSample (0, i, x);
+            buffer.setSample (1, i, x);
+        }
+        field.process (buffer.getArrayOfWritePointers(), 2, kBlock, 120.0, 1.0f);
+        left.insert (left.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + kBlock);
+        right.insert (right.end(), buffer.getReadPointer (1), buffer.getReadPointer (1) + kBlock);
+    }
+}
+
+void testFieldSession()
+{
+    std::puts ("field session: independent of the grid, sounds like it on arrival, fusion is signal, tones come back");
+    GridEngine grid;
+    grid.prepare (48000.0, kBlock);
+    grid.loadDefaultPreset();
+
+    const auto storeOf = [] (GridEngine& engine, BlockType type) -> std::shared_ptr<ParamStore>
+    {
+        for (const auto& node : engine.getModel().getNodes())
+            if (auto s = engine.getStore (node.store); s != nullptr && s->getType() == type)
+                return s;
+        return nullptr;
+    };
+    const auto blobOf = [] (FieldSession& f, BlockType type)
+    {
+        for (int i = 0; i < (int) f.getBlobs().size(); ++i)
+            if (f.getBlobs()[(size_t) i].type == type)
+                return i;
+        return -1;
+    };
+    const auto snapshot = [] (GridEngine& engine)
+    {
+        std::vector<float> values;
+        for (const auto& node : engine.getModel().getNodes())
+            if (auto s = engine.getStore (node.store))
+            {
+                values.push_back (s->isBypassed() ? 1.0f : 0.0f);
+                for (int p = 0; p < s->getNumParams(); ++p)
+                    values.push_back (s->getParam (p));
+            }
+        return values;
+    };
+
+    // Delay and reverb on, in the grid's own values: what the field copies.
+    storeOf (grid, BlockType::DigitalDelay)->setBypassed (false);
+    storeOf (grid, BlockType::PlateReverb)->setBypassed (false);
+    grid.storeScene (0);
+
+    FieldSession field (grid);
+    const auto toneFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_field_test");
+    toneFolder.deleteRecursively();
+    field.setToneFolder (toneFolder);
+    field.prepare (48000.0, kBlock);
+    field.syncWithGrid();
+    const auto gridBefore = snapshot (grid);
+
+    // Same elements, nothing fused on arrival, and it sounds like the grid.
+    int blocks = 0;
+    for (const auto& node : grid.getModel().getNodes())
+        blocks += node.kind == NodeKind::Block ? 1 : 0;
+    CHECK ((int) field.getBlobs().size() == blocks);
+    for (int a = 0; a < blocks; ++a)
+        for (int b = a + 1; b < blocks; ++b)
+            CHECK (juce::exactlyEqual (field.getOverlap (a, b), 0.0f));
+
+    std::vector<float> fieldL, fieldR, gridL, gridR;
+    renderField (field, fieldL, fieldR, 1.0);
+    {
+        juce::AudioBuffer<float> buffer (2, kBlock);
+        double phase = 0.0;
+        for (int b = 0; b < (int) (1.0 * 48000.0 / kBlock); ++b)
+        {
+            for (int i = 0; i < kBlock; ++i)
+            {
+                phase += 220.0 / 48000.0;
+                const float x = 0.25f * std::sin ((float) phase * 6.2831853f) * std::exp (-3.0f * std::fmod ((float) (b * kBlock + i) / 48000.0f, 0.5f));
+                buffer.setSample (0, i, x);
+                buffer.setSample (1, i, x);
+            }
+            grid.process (buffer.getArrayOfReadPointers(), 2, buffer.getArrayOfWritePointers(), 2, kBlock);
+            gridL.insert (gridL.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + kBlock);
+        }
+    }
+    double difference = 0.0, energy = 0.0;
+    for (size_t i = std::min (fieldL.size(), gridL.size()) / 2; i < std::min (fieldL.size(), gridL.size()); ++i)   // past the grid's parameter ramps
+    {
+        difference += (fieldL[i] - gridL[i]) * (fieldL[i] - gridL[i]);
+        energy += gridL[i] * gridL[i];
+    }
+    std::printf ("  field vs grid on arrival: %.1f dB of difference\n", 10.0 * std::log10 (difference / std::max (energy, 1e-12) + 1e-12));
+    CHECK (difference < energy * 0.01);
+
+    // Moving a form changes several parameters of the field's block and nothing of the grid.
+    const int delay = blobOf (field, BlockType::DigitalDelay), reverb = blobOf (field, BlockType::PlateReverb);
+    CHECK (delay >= 0 && reverb >= 0);
+    const auto fieldDelay = storeOf (field.getEngine(), BlockType::DigitalDelay);
+    const float timeBefore = fieldDelay->getParam (DigitalDelayBlock::TimeMs);
+    const float feedbackBefore = fieldDelay->getParam (DigitalDelayBlock::Feedback);
+    const auto home = field.getBlobs()[(size_t) delay];
+    field.setBlobPosition (delay, home.x - 0.04f, home.y + 0.25f);
+    renderField (field, fieldL, fieldR, 0.05);
+    CHECK (! juce::approximatelyEqual (fieldDelay->getParam (DigitalDelayBlock::TimeMs), timeBefore));
+    CHECK (! juce::approximatelyEqual (fieldDelay->getParam (DigitalDelayBlock::Feedback), feedbackBefore));
+    CHECK (snapshot (grid) == gridBefore);
+
+    // Stretching makes it move by itself; the grid still does not.
+    field.setBlobStretch (delay, 1.0f, 4.0f);
+    float low = 1.0e9f, high = -1.0e9f;
+    for (int i = 0; i < 40; ++i)
+    {
+        renderField (field, fieldL, fieldR, 0.05);
+        low = std::min (low, fieldDelay->getParam (DigitalDelayBlock::Feedback));
+        high = std::max (high, fieldDelay->getParam (DigitalDelayBlock::Feedback));
+    }
+    CHECK (high - low > 0.5f);
+    CHECK (snapshot (grid) == gridBefore);
+    field.setBlobStretch (delay, 0.0f, 0.0f);
+    field.setBlobPosition (delay, home.x, home.y);
+
+    // Fusing: real sends both ways, a different sound, and bounded even at full feedback.
+    std::vector<float> apartL, apartR, fusedL, fusedR;
+    renderField (field, apartL, apartR, 2.0);
+    const auto& r = field.getBlobs()[(size_t) reverb];
+    const auto delayStore = field.getBlobs()[(size_t) delay].store, reverbStore = r.store;
+    CHECK (juce::exactlyEqual (field.getBus().getGain (delayStore, reverbStore), 0.0f));
+    field.setBlobPosition (reverb, field.getBlobs()[(size_t) delay].x, field.getBlobs()[(size_t) delay].y);
+    field.setFusion (1.0f);
+    CHECK (field.getOverlap (delay, reverb) > 0.9f);
+    CHECK (field.getBus().getGain (delayStore, reverbStore) > 0.3f && field.getBus().getGain (reverbStore, delayStore) > 0.3f);
+    renderField (field, fusedL, fusedR, 2.0);
+    double apartEnergy = 0.0, fusedDiff = 0.0;
+    float peak = 0.0f;
+    for (size_t i = fusedL.size() / 2; i < fusedL.size(); ++i)
+    {
+        apartEnergy += apartL[i] * apartL[i];
+        fusedDiff += (fusedL[i] - apartL[i]) * (fusedL[i] - apartL[i]);
+        peak = std::max (peak, std::abs (fusedL[i]));
+        CHECK (std::isfinite (fusedL[i]));
+    }
+    std::printf ("  fused vs apart: %.1f dB of difference, peak %.2f\n", 10.0 * std::log10 (fusedDiff / std::max (apartEnergy, 1e-12) + 1e-12), peak);
+    CHECK (fusedDiff > apartEnergy * 0.05);
+    CHECK (peak <= 1.0f);
+
+    // Worst case: everything on, everything stacked, full stretch, loud input, for 5 s.
+    for (int b = 0; b < (int) field.getBlobs().size(); ++b)
+    {
+        if (! field.getBlobs()[(size_t) b].on) field.toggleBlob (b);
+        field.setBlobPosition (b, 0.5f, 0.5f);
+        field.setBlobStretch (b, 1.0f, 5.0f);
+    }
+    field.setTide (1.0f);
+    renderField (field, fusedL, fusedR, 5.0, 0.9f);
+    peak = 0.0f;
+    bool finite = true;
+    for (const auto v : fusedL) { peak = std::max (peak, std::abs (v)); finite = finite && std::isfinite (v); }
+    std::printf ("  everything fused, 5 s: peak %.2f\n", peak);
+    CHECK (finite && peak <= 1.0f);
+    CHECK (snapshot (grid) == gridBefore);
+
+    // Tones: save, wander off, come back; blend halfway; mutate really changes it.
+    field.resetFromGrid();
+    const int reverb2 = blobOf (field, BlockType::PlateReverb);
+    field.setBlobPosition (reverb2, 0.2f, 0.3f);
+    field.setBlobStretch (reverb2, 0.4f, 1.0f);
+    CHECK (field.saveTone());
+    field.setBlobPosition (reverb2, 0.8f, 0.7f);
+    field.setBlobStretch (reverb2, 0.8f, 1.0f);
+    CHECK (field.saveTone());
+    CHECK (field.getTones().size() == 2);
+    CHECK (field.getTones()[0].name == "Tono 01");
+    CHECK (toneFolder.getChildFile ("Tono 02.kumcampo").existsAsFile());
+
+    CHECK (field.loadTone (0) == 0);
+    CHECK_NEAR (field.getBlobs()[(size_t) reverb2].x, 0.2, 0.001);
+    CHECK_NEAR (field.getBlobs()[(size_t) reverb2].stretch, 0.4, 0.001);
+    field.blendTones (0, 1, 0.5f);
+    CHECK_NEAR (field.getBlobs()[(size_t) reverb2].x, 0.5, 0.001);
+    CHECK_NEAR (field.getBlobs()[(size_t) reverb2].stretch, 0.6, 0.001);
+    CHECK_NEAR (field.getTones()[0].data.getChild (reverb2).getProperty ("x"), 0.2, 0.001);   // the saved tones stay as they were
+
+    const auto beforeMutation = field.captureState();
+    field.mutate();
+    CHECK (! juce::approximatelyEqual ((float) field.getBlobs()[(size_t) reverb2].y, (float) beforeMutation.getChild (reverb2).getProperty ("y")));
+    field.applyState (beforeMutation);
+    CHECK_NEAR (field.getBlobs()[(size_t) reverb2].x, 0.5, 0.001);
+
+    // A new block in the grid appears in the field; the others keep what they had.
+    const auto output = std::find_if (grid.getModel().getNodes().begin(), grid.getModel().getNodes().end(), [] (const GridNode& n) { return n.kind == NodeKind::Output; });
+    CHECK (grid.insertBlock (output->inputs.front(), output->id, BlockType::Tremolo, false) != kInvalidNode);
+    field.syncWithGrid();
+    CHECK ((int) field.getBlobs().size() == blocks + 1);
+    CHECK (blobOf (field, BlockType::Tremolo) >= 0);
+    CHECK_NEAR (field.getBlobs()[(size_t) blobOf (field, BlockType::PlateReverb)].x, 0.5, 0.001);
+
+    // A sitar brings a second form, its tampura: its own parameters, its own switch, and it fuses.
+    {
+        const auto outputNode = std::find_if (grid.getModel().getNodes().begin(), grid.getModel().getNodes().end(), [] (const GridNode& n) { return n.kind == NodeKind::Output; });
+        CHECK (grid.insertBlock (outputNode->inputs.front(), outputNode->id, BlockType::Sitar, false) != kInvalidNode);
+        field.syncWithGrid();
+        const auto tanpuraIndex = [&field] (bool wanted)
+        {
+            for (int i = 0; i < (int) field.getBlobs().size(); ++i)
+                if (field.getBlobs()[(size_t) i].type == BlockType::Sitar && field.getBlobs()[(size_t) i].tanpura == wanted)
+                    return i;
+            return -1;
+        };
+        const int sitarBlob = tanpuraIndex (false), droneBlob = tanpuraIndex (true);
+        CHECK (sitarBlob >= 0 && droneBlob == sitarBlob + 1);
+        const auto fieldSitar = storeOf (field.getEngine(), BlockType::Sitar);
+        const auto gridSitar = storeOf (grid, BlockType::Sitar);
+
+        // Its switch: only the drone, and it brings the sitar along if it was off.
+        if (field.getBlobs()[(size_t) sitarBlob].on)
+            field.toggleBlob (sitarBlob);
+        CHECK (! field.getBlobs()[(size_t) droneBlob].on);
+        field.toggleBlob (droneBlob);
+        CHECK (field.getBlobs()[(size_t) sitarBlob].on);
+        CHECK (fieldSitar->getParam (SitarBlock::Tanpura) > 0.5f);
+        CHECK (gridSitar->getParam (SitarBlock::Tanpura) < 0.5f);
+
+        // It moves the drone's parameters and not the sitar's; the sitar's form the other way round.
+        const auto paramsBefore = [&fieldSitar] (int p) { return fieldSitar->getParam (p); };
+        const float buzz = paramsBefore (SitarBlock::Buzz), cycle = paramsBefore (SitarBlock::TanpuraMovement);
+        const auto dronePlace = field.getBlobs()[(size_t) droneBlob];
+        field.setBlobPosition (droneBlob, dronePlace.x + 0.2f, dronePlace.y - 0.3f);
+        std::vector<float> silenceL, silenceR;
+        renderField (field, silenceL, silenceR, 0.1, 0.0f);
+        CHECK (juce::approximatelyEqual (fieldSitar->getParam (SitarBlock::Buzz), buzz));
+        CHECK (! juce::approximatelyEqual (fieldSitar->getParam (SitarBlock::TanpuraMovement), cycle));
+        field.setBlobPosition (droneBlob, dronePlace.x, dronePlace.y);
+
+        // With nothing played it sounds, and fusing sends it through the other block.
+        const int delayBlob = blobOf (field, BlockType::DigitalDelay);
+        if (! field.getBlobs()[(size_t) delayBlob].on)
+            field.toggleBlob (delayBlob);
+        const auto fieldDelay2 = storeOf (field.getEngine(), BlockType::DigitalDelay);
+        renderField (field, silenceL, silenceR, 3.0, 0.0f);
+        double droneAlone = 0.0;
+        for (size_t i = silenceL.size() / 2; i < silenceL.size(); ++i)
+            droneAlone += silenceL[i] * silenceL[i];
+        CHECK (droneAlone > 1.0e-3);
+        CHECK (juce::exactlyEqual (field.getBus().getGain (FusionBus::kDirectSlot, fieldDelay2->getId()), 0.0f));
+
+        const auto delayPlace = field.getBlobs()[(size_t) delayBlob];
+        field.setBlobPosition (droneBlob, delayPlace.x, delayPlace.y);
+        CHECK (field.getBus().getGain (FusionBus::kDirectSlot, fieldDelay2->getId()) > 0.1f);
+        std::vector<float> fusedDroneL, fusedDroneR;
+        renderField (field, fusedDroneL, fusedDroneR, 3.0, 0.0f);
+        double droneFused = 0.0;
+        float dronePeak = 0.0f;
+        for (size_t i = fusedDroneL.size() / 2; i < fusedDroneL.size(); ++i)
+        {
+            droneFused += fusedDroneL[i] * fusedDroneL[i];
+            dronePeak = std::max (dronePeak, std::abs (fusedDroneL[i]));
+        }
+        std::printf ("  tampura through the delay: %+.1f dB compared to alone, peak %.2f\n", 10.0 * std::log10 (droneFused / droneAlone), dronePeak);
+        CHECK (std::abs (10.0 * std::log10 (droneFused / droneAlone)) > 0.3);
+        CHECK (dronePeak <= 1.0f);
+
+        // A tone keeps the two forms apart; pushing to the grid does not change how the drone leaves it.
+        const auto saved2 = field.captureState();
+        field.setBlobPosition (droneBlob, 0.3f, 0.3f);
+        field.applyState (saved2);
+        CHECK_NEAR (field.getBlobs()[(size_t) droneBlob].x, delayPlace.x, 0.001);
+        CHECK (field.getBlobs()[(size_t) droneBlob].tanpura && ! field.getBlobs()[(size_t) sitarBlob].tanpura);
+
+        gridSitar->setParam (SitarBlock::TanpuraOutput, 1.0f);
+        const int pushed = field.pushToGrid();
+        CHECK (pushed == blocks + 2);
+        CHECK (gridSitar->getParam (SitarBlock::Tanpura) > 0.5f);
+        CHECK (gridSitar->getParam (SitarBlock::TanpuraOutput) > 0.5f);
+        gridSitar->setParam (SitarBlock::Tanpura, 0.0f);
+        field.setBlobPosition (droneBlob, dronePlace.x, dronePlace.y);
+        if (field.getBlobs()[(size_t) droneBlob].on) field.toggleBlob (droneBlob);
+        blocks += 1;
+    }
+
+    // Saved with the project.
+    const auto saved = field.saveState();
+    FieldSession reopened (grid);
+    reopened.setToneFolder (toneFolder);
+    reopened.prepare (48000.0, kBlock);
+    reopened.loadState (saved);
+    reopened.syncWithGrid();
+    CHECK_NEAR (reopened.getBlobs()[(size_t) blobOf (reopened, BlockType::PlateReverb)].x, 0.5, 0.001);
+
+    // Only "pasar al Grid" writes to the grid.
+    const auto gridBeforePush = snapshot (grid);
+    field.setBlobPosition (reverb2, 0.1f, 0.1f);
+    CHECK (snapshot (grid) == gridBeforePush);
+    CHECK (field.pushToGrid() == blocks + 1);
+    CHECK (snapshot (grid) != gridBeforePush);
+
+    CHECK (field.removeTone (0));
+    CHECK (field.getTones().size() == 1);
+    toneFolder.deleteRecursively();
+}
+
+void testSimpView()
+{
+    std::puts ("simp view: every block is explained, one knob, the grid's own values");
+
+    // Every block the palette offers says what it does, and its knob exists.
+    for (const auto& group : theme::paletteGroups())
+        for (const auto type : group.types)
+        {
+            const auto info = simpInfoFor (type);
+            CHECK (juce::String (juce::CharPointer_UTF8 (info.description)).isNotEmpty());
+            if (info.paramId != nullptr)
+            {
+                const auto store = kumamp::createStore (type, 1);
+                CHECK (store != nullptr && store->findParam (info.paramId) >= 0);
+            }
+        }
+
+    PresetTestProcessor processor;
+    GridEngine engine;
+    engine.prepare (48000.0, kBlock);
+    engine.loadDefaultPreset();
+    SimpView view (engine, processor.parameters);
+    view.setBounds (0, 0, 1500, 796);
+
+    int blocks = 0;
+    for (const auto& node : engine.getModel().getNodes())
+        blocks += node.kind == NodeKind::Block ? 1 : 0;
+    CHECK (view.getNumCards() == blocks);
+
+    // The card writes to the grid's store, and follows it (scenes, the block panel).
+    int card = -1;
+    for (int i = 0; i < view.getNumCards(); ++i)
+        if (view.getCardStore (i)->getType() == BlockType::DigitalDelay)
+            card = i;
+    CHECK (card >= 0);
+    auto* store = view.getCardStore (card);
+    const int mix = store->findParam ("mix");
+    view.setCardValue (card, 77.0f);
+    CHECK_NEAR (store->getParam (mix), 77.0, 0.01);
+    store->setParam (mix, 12.0f);
+    view.refresh();
+    CHECK_NEAR (view.getCardKnobValue (card), 12.0, 0.01);
+    const bool wasBypassed = store->isBypassed();
+    view.toggleCard (card);
+    CHECK (store->isBypassed() != wasBypassed);
+
+    // The icons: each preset is written once, loads, and lights its icon.
+    const auto presetFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_simp_test");
+    presetFolder.deleteRecursively();
+    PresetManager manager (engine, processor.parameters);
+    manager.setFolder (presetFolder);
+    view.presetNameSource = [&manager] { return manager.getCurrentName(); };
+    int chosen = -1;
+    view.onPresetChosen = [&chosen] (int preset) { chosen = preset; };
+    CHECK (factorypresets::getNumSimpPresets() == 6);
+    CHECK (view.getActivePreset() == -1);
+    const auto hasType = [&engine] (BlockType type)
+    {
+        for (const auto& node : engine.getModel().getNodes())
+            if (auto s = engine.getStore (node.store); s != nullptr && s->getType() == type)
+                return true;
+        return false;
+    };
+    for (int i = 0; i < factorypresets::getNumSimpPresets(); ++i)
+    {
+        const auto file = factorypresets::writeSimpPreset (presetFolder, i);
+        CHECK (file.existsAsFile());
+        CHECK (manager.load (file).wasOk());
+        view.choosePreset (i);
+        CHECK (chosen == i);
+        CHECK (view.getActivePreset() == i);
+        CHECK (view.getNumCards() >= 2);
+        CHECK (hasType (BlockType::NamAmp) == factorypresets::getSimpModelFile (i).isNotEmpty());
+    }
+    CHECK (hasType (BlockType::Sitar));   // the last one
+
+    // Yours once written: a click does not overwrite your changes.
+    const auto clean = factorypresets::writeSimpPreset (presetFolder, 0);
+    CHECK (clean.replaceWithText ("mine"));
+    CHECK (factorypresets::writeSimpPreset (presetFolder, 0).loadFileAsString() == "mine");
+    presetFolder.deleteRecursively();
+    engine.loadDefaultPreset();
+    view.refresh();
+    blocks = 0;
+    for (const auto& node : engine.getModel().getNodes())
+        blocks += node.kind == NodeKind::Block ? 1 : 0;
+
+    // The sitar's card switches the tampura, on the block's own parameter.
+    {
+        const auto outputNode = std::find_if (engine.getModel().getNodes().begin(), engine.getModel().getNodes().end(), [] (const GridNode& n) { return n.kind == NodeKind::Output; });
+        CHECK (engine.insertBlock (outputNode->inputs.front(), outputNode->id, BlockType::Sitar, false) != kInvalidNode);
+        view.refresh();
+        int sitarCard = -1;
+        for (int i = 0; i < view.getNumCards(); ++i)
+            if (view.getCardStore (i)->getType() == BlockType::Sitar)
+                sitarCard = i;
+        CHECK (sitarCard >= 0);
+        auto* sitar = view.getCardStore (sitarCard);
+        CHECK (sitar->getParam (SitarBlock::Tanpura) < 0.5f);
+        view.toggleCardOption (sitarCard);
+        CHECK (sitar->getParam (SitarBlock::Tanpura) > 0.5f);
+        sitar->setParam (SitarBlock::Tanpura, 0.0f);
+        view.refresh();
+        view.toggleCardOption (sitarCard);
+        CHECK (sitar->getParam (SitarBlock::Tanpura) > 0.5f);   // it had followed the block back to off
+        engine.loadDefaultPreset();
+        view.refresh();
+    }
+
+    // A new block in the grid gets its card.
+    const auto output = std::find_if (engine.getModel().getNodes().begin(), engine.getModel().getNodes().end(), [] (const GridNode& n) { return n.kind == NodeKind::Output; });
+    CHECK (engine.insertBlock (output->inputs.front(), output->id, BlockType::Tremolo, false) != kInvalidNode);
+    view.refresh();
+    CHECK (view.getNumCards() == blocks + 1);
+}
+
+void testFactoryPresets()
+{
+    std::puts ("factory presets: written once, every one loads, models named but not shipped");
+    const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_factory_test");
+    root.deleteRecursively();
+
+    PresetTestProcessor processor;
+    GridEngine engine;
+    engine.prepare (48000.0, kBlock);
+    engine.loadDefaultPreset();
+    PresetManager manager (engine, processor.parameters);
+    manager.setFolder (root);
+
+    const int written = factorypresets::install (root);
+    const auto all = manager.scan();
+    juce::StringArray categories;
+    for (const auto& p : all)
+        categories.addIfNotAlreadyThere (p.category);
+    std::printf ("  %d presets in %d categories\n", written, categories.size());
+    CHECK (written == (int) all.size() && written >= 15);
+    CHECK (categories.size() >= 5);
+    CHECK (factorypresets::install (root) == 0);    // never written twice
+
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    for (const auto& info : all)
+    {
+        CHECK (info.comment.contains ("tone3000.com/tones/"));
+        CHECK (manager.load (info.file).wasOk());
+        CHECK (engine.getSceneName (1) == "Solo");
+
+        const auto xml = juce::XmlDocument::parse (info.file);
+        CHECK (xml != nullptr && xml->toString().contains (".nam"));
+
+        for (int scene = 0; scene < 4; ++scene)
+        {
+            engine.setRequestedScene (scene);
+            float peak = 0.0f;
+            for (int b = 0; b < 100; ++b)
+            {
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < kBlock; ++i)
+                        buffer.setSample (c, i, 0.2f * std::sin ((float) (b * kBlock + i) * 0.03f));
+                engine.process (buffer.getArrayOfReadPointers(), 2, buffer.getArrayOfWritePointers(), 2, kBlock);
+                peak = std::max (peak, buffer.getMagnitude (0, kBlock));
+            }
+            CHECK (std::isfinite (peak) && peak > 0.0001f && peak < 8.0f);
+        }
+    }
+    root.deleteRecursively();
+}
+
 void testPresets()
 {
     std::puts ("presets: save / scan / load (missing model relocated) / trash");
@@ -1276,6 +1758,9 @@ int main()
     testReplaceBlock();
     testSampler();
     testPresets();
+    testFactoryPresets();
+    testFieldSession();
+    testSimpView();
     testTone3000Helpers();
     testTone3000Network();
 

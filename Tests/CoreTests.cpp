@@ -816,6 +816,68 @@ void testBlockBehaviour()
         std::printf ("  hall decay 2.0 s -> measured RT60 %.2f s\n", rt60);
         CHECK (rt60 > 1.4 && rt60 < 2.8);
     }
+    { // Repeat percussion: one hit per cycle, full level on the hit, falling to 1 - depth
+        BlockRig rig (BlockType::RepeatPercussion);
+        rig.set (RepeatPercussionBlock::RateHz, 10.0f);
+        rig.set (RepeatPercussionBlock::Depth, 78.0f);
+        rig.block->prepare (kRate, kBlock);
+        std::vector<float> l ((size_t) kRate, 0.5f), r = l;
+        rig.run (l, r);
+        float lo = 1.0f, hi = 0.0f, maxRise = 0.0f;
+        int hits = 0;
+        for (size_t i = l.size() / 2; i < l.size(); ++i)
+        {
+            lo = std::min (lo, l[i]); hi = std::max (hi, l[i]);
+            maxRise = std::max (maxRise, l[i] - l[i - 1]);
+            hits += l[i] >= 0.4f && l[i - 1] < 0.4f;
+        }
+        std::printf ("  repeat percussion: %d hits in 0.5 s, level %.3f..%.3f, largest step %.3f\n", hits, lo, hi, maxRise);
+        CHECK (hits == 5);
+        CHECK (hi > 0.45f && lo < 0.5f * 0.3f && lo > 0.5f * 0.2f);
+        CHECK (maxRise < 0.05f);    // the jump is fast but does not click
+    }
+    { // Repeat percussion: Cortina keeps the sound going after the input stops, and stays bounded
+        const auto tailAfterBurst = [&] (float curtainPercent, double burst, double hz = 220.0)
+        {
+            BlockRig rig (BlockType::RepeatPercussion);
+            rig.set (RepeatPercussionBlock::RateHz, 6.0f);
+            rig.set (RepeatPercussionBlock::Curtain, curtainPercent);
+            rig.block->prepare (kRate, kBlock);
+            auto l = sine (hz, 6.0);
+            for (size_t i = 0; i < l.size(); ++i)
+                l[i] = (float) i < (float) (burst * kRate) ? l[i] : 0.0f;
+            auto r = l;
+            rig.run (l, r);
+            float tail = 0.0f, peak = 0.0f;
+            for (size_t i = 0; i < l.size(); ++i)
+            {
+                peak = std::max (peak, std::abs (l[i]));
+                if (i > l.size() - (size_t) kRate)
+                    tail = std::max (tail, std::abs (l[i]));
+            }
+            return std::pair { tail, peak };
+        };
+        const float dryTail = tailAfterBurst (0.0f, 0.5).first;
+        const float halfTail = tailAfterBurst (50.0f, 0.5).first;
+        const auto full = tailAfterBurst (100.0f, 0.5);
+        std::printf ("  repeat cortina, 5 s after the note: 0 %% %.4f, 50 %% %.4f, 100 %% %.3f (peak %.2f)\n", dryTail, halfTail, full.first, full.second);
+        CHECK (dryTail < 1.0e-4f);
+        CHECK (halfTail > dryTail && halfTail < full.first);
+        CHECK (full.first > 0.03f);
+        CHECK (full.second < 2.0f);
+        CHECK (tailAfterBurst (100.0f, 6.0).second < 2.0f);   // playing all the way through
+
+        // Any note holds, not just the ones that happen to fit the rate.
+        float lowest = 1.0f, highest = 0.0f;
+        for (const double hz : { 82.41, 110.0, 146.83, 196.0, 220.0, 246.94, 329.63, 440.0 })
+        {
+            const float t = tailAfterBurst (100.0f, 0.5, hz).first;
+            lowest = std::min (lowest, t);
+            highest = std::max (highest, t);
+        }
+        std::printf ("  repeat cortina across notes: %.3f .. %.3f\n", lowest, highest);
+        CHECK (lowest > highest * 0.1f);
+    }
     { // Tremolo: 100 % depth fully modulates
         BlockRig rig (BlockType::Tremolo);
         rig.set (TremoloBlock::Depth, 100.0f);

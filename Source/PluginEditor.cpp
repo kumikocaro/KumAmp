@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "UI/UserSettings.h"
+#include "Presets/FactoryPresets.h"
 
 void KumAmpAudioProcessorEditor::Placeholder::paint (juce::Graphics& g)
 {
@@ -22,13 +23,18 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
       presetBar (p.getPresets()),
       grid (p.getEngine()),
       settings (p.getParameters()),
-      presetBrowser (p.getPresets())
+      presetBrowser (p.getPresets()),
+      fieldView (p.getField()),
+      simpView (p.getEngine(), p.getParameters())
 {
-    setLookAndFeel (&lookAndFeel);
+    setLookAndFeel (&lookAndFeel.get());
     addAndMakeVisible (content);
     setWantsKeyboardFocus (true);
 
     header.onTabChanged = [this] (int tab) { showTab (tab); };
+    header.onFieldClicked = [this] { showField (! fieldView.isVisible()); };
+    header.onSimpClicked = [this] { showSimp (! simpView.isVisible()); };
+    header.onAboutClicked = [this] { showAbout (! aboutView.isVisible()); };
     content.addAndMakeVisible (header);
 
     sidebar.onTunerClicked = [this] { showTuner (! tunerView.isVisible()); };
@@ -106,6 +112,13 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
         showToast ("Preset \"" + name + "\" cargado");
     };
     content.addChildComponent (presetBrowser);
+    fieldView.onMessage = [this] (const juce::String& message) { showToast (message); };
+    content.addChildComponent (fieldView);
+    simpView.onPresetChosen = [this] (int preset) { loadSimpPreset (preset); };
+    simpView.presetNameSource = [this] { return kumProcessor.getPresets().getCurrentName(); };
+    content.addChildComponent (simpView);
+    aboutView.onClose = [this] { showAbout (false); };
+    content.addChildComponent (aboutView);
     tone3000Picker.onChosen = [this] (const kumamp::t3k::Tone& tone, const kumamp::t3k::Model& model) { downloadTone3000Model (tone, model); };
     tone3000Picker.onClosed = [] { kumamp::t3k::log ("picker: canceled"); };
     content.addChildComponent (tone3000Picker);
@@ -118,6 +131,12 @@ KumAmpAudioProcessorEditor::KumAmpAudioProcessorEditor (KumAmpAudioProcessor& p)
 
     // The compact tuner in the sidebar is always live while the editor is open.
     kumProcessor.getTuner().setListening (true);
+
+    // The view the player left open in this project.
+    if ((bool) kumProcessor.getParameters().state.getProperty ("fieldViewOpen", false))
+        showField (true);
+    else if ((bool) kumProcessor.getParameters().state.getProperty ("simpViewOpen", false))
+        showSimp (true);
 
     setResizable (true, true);
     uiScale = fittingScale (loadSavedScale());
@@ -173,8 +192,59 @@ void KumAmpAudioProcessorEditor::showSampleOverlay (std::shared_ptr<kumamp::Para
     sampleOverlay->toFront (false);
 }
 
+void KumAmpAudioProcessorEditor::showField (bool shouldShow)
+{
+    if (shouldShow)
+    {
+        showSimp (false);
+        aboutView.setVisible (false);
+    }
+    fieldView.setVisible (shouldShow);
+    header.setViewButtons (shouldShow, simpView.isVisible());
+    header.setActiveTab (shouldShow || simpView.isVisible() ? -1 : activeTab);
+    kumProcessor.getParameters().state.setProperty ("fieldViewOpen", shouldShow, nullptr);
+    kumProcessor.setFieldActive (shouldShow);
+    if (shouldShow)
+    {
+        fieldView.toFront (true);
+        toast.toFront (false);
+    }
+}
+
+void KumAmpAudioProcessorEditor::showSimp (bool shouldShow)
+{
+    if (shouldShow)
+    {
+        if (fieldView.isVisible())
+            showField (false);
+        aboutView.setVisible (false);
+    }
+    simpView.setVisible (shouldShow);
+    header.setViewButtons (fieldView.isVisible(), shouldShow);
+    header.setActiveTab (shouldShow || fieldView.isVisible() ? -1 : activeTab);
+    kumProcessor.getParameters().state.setProperty ("simpViewOpen", shouldShow, nullptr);
+    if (shouldShow)
+    {
+        simpView.toFront (false);
+        toast.toFront (false);
+    }
+}
+
+void KumAmpAudioProcessorEditor::showAbout (bool shouldShow)
+{
+    aboutView.setVisible (shouldShow);
+    if (shouldShow)
+        aboutView.toFront (false);
+}
+
 void KumAmpAudioProcessorEditor::showTab (int tab)
 {
+    activeTab = tab;
+    aboutView.setVisible (false);
+    if (fieldView.isVisible())
+        showField (false);
+    if (simpView.isVisible())
+        showSimp (false);
     header.setActiveTab (tab);
     const char* titles[] = { "", "PRESETS", "SNAPSHOTS", "IRs", "SETTINGS" };
     placeholder.title = titles[juce::jlimit (0, 4, tab)];
@@ -212,6 +282,7 @@ void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
     menu.addSeparator();
     menu.addItem (4, "Reset DSP (limpiar colas y estados)");
     menu.addItem (5, "Cargar preset por defecto");
+    menu.addItem (6, "Acerca de KumAmp");
     menu.addSeparator();
     juce::PopupMenu sizes;
     for (int percent : { 60, 70, 80, 90, 100, 110, 125, 150 })
@@ -230,6 +301,7 @@ void KumAmpAudioProcessorEditor::showMainMenu (juce::Component& source)
                                 case 3: safe->engine.redo(); break;
                                 case 4: safe->engine.pushCommand ({ kumamp::EngineCommand::Type::ResetAllBlocks, 0 }); break;
                                 case 5: safe->engine.loadDefaultPreset(); safe->grid.selectNode (kumamp::kInvalidNode); break;
+                                case 6: safe->showAbout (true); break;
                                 case 99: safe->setUiScale (fittingScale (1.5f)); break;
                                 default:
                                     if (result > 100)
@@ -355,6 +427,25 @@ void KumAmpAudioProcessorEditor::loadPreset (const juce::File& file)
     if (presetBrowser.isVisible())
         presetBrowser.refresh();
     showToast ("Preset \"" + kumProcessor.getPresets().getCurrentName() + "\" cargado");
+}
+
+void KumAmpAudioProcessorEditor::loadSimpPreset (int preset)
+{
+    using namespace kumamp::factorypresets;
+    loadPreset (writeSimpPreset (kumamp::PresetManager::getDefaultFolder(), preset));
+
+    // The models are the player's own files: say so if this one is not there.
+    const auto model = getSimpModelFile (preset);
+    if (model.isNotEmpty())
+    {
+        const auto library = kumamp::PresetManager::getDefaultFolder().getParentDirectory();
+        bool found = false;
+        if (library.isDirectory())
+            for (const auto& entry : juce::RangedDirectoryIterator (library, true, "*.nam"))
+                found = found || entry.getFile().getFileName() == model;
+        if (! found)
+            showToast ("Error: falta el modelo. Buscalo en TONE3000: " + getSimpModelTitle (preset));
+    }
 }
 
 void KumAmpAudioProcessorEditor::saveCurrentPreset()
@@ -572,4 +663,7 @@ void KumAmpAudioProcessorEditor::layoutContent()
     presetBrowser.setBounds (centre);
     tone3000Picker.setBounds (centre);
     toast.setBounds (centreCard.withSizeKeepingCentre (420, 40).withY (centreCard.getBottom() - 56));
+    fieldView.setBounds (content.getLocalBounds().withTrimmedTop (header.getBottom()));
+    simpView.setBounds (fieldView.getBounds());
+    aboutView.setBounds (fieldView.getBounds());
 }

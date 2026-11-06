@@ -23,21 +23,18 @@ namespace
 //==============================================================================
 void HeaderBar::Tab::paintButton (juce::Graphics& g, bool highlighted, bool)
 {
-    const auto area = getLocalBounds().toFloat().reduced (3.0f);
-    if (getToggleState())
-    {
-        g.setGradientFill (juce::ColourGradient (theme::accent.brighter (0.1f), area.getX(), area.getY(),
-                                                 theme::accent.darker (0.25f), area.getX(), area.getBottom(), false));
-        g.fillRoundedRectangle (area, 9.0f);
-    }
-    else if (highlighted)
-    {
-        g.setColour (theme::panelRaised);
-        g.fillRoundedRectangle (area, 9.0f);
-    }
-    g.setColour (getToggleState() ? juce::Colours::white : theme::text.withAlpha (0.85f));
-    g.setFont (juce::FontOptions (17.0f));
+    const auto area = getLocalBounds().toFloat();
+    g.setColour (theme::text);
+    g.setFont (juce::FontOptions (17.0f, juce::Font::bold));
     g.drawText (getName(), area, juce::Justification::centred);
+
+    // Underlined like a link on the website: red when active, hairline on hover.
+    if (getToggleState() || highlighted)
+    {
+        const float w = (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), getName());
+        g.setColour (getToggleState() ? theme::accent : theme::border);
+        g.fillRect (juce::Rectangle<float> (w, 3.0f).withCentre ({ area.getCentreX(), area.getCentreY() + 15.0f }));
+    }
 }
 
 HeaderBar::HeaderBar()
@@ -50,6 +47,24 @@ HeaderBar::HeaderBar()
         addAndMakeVisible (*tabs[(size_t) i]);
     }
     setActiveTab (0);
+
+    fieldButton.setTooltip ("Un instrumento aparte para descubrir sonidos, sin tocar el Grid");
+    fieldButton.onClick = [this] { if (onFieldClicked) onFieldClicked(); };
+    simpButton.setTooltip (juce::String (juce::CharPointer_UTF8 ("La misma cadena de la forma m\xc3\xa1s simple, explicando qu\xc3\xa9 hace cada cosa")));
+    simpButton.onClick = [this] { if (onSimpClicked) onSimpClicked(); };
+    aboutButton.onClick = [this] { if (onAboutClicked) onAboutClicked(); };
+    for (auto* button : { &fieldButton, &simpButton })
+    {
+        button->setColour (juce::TextButton::buttonColourId, theme::panel);
+        addAndMakeVisible (*button);
+    }
+    addAndMakeVisible (aboutButton);
+}
+
+void HeaderBar::setViewButtons (bool fieldOpen, bool simpOpen)
+{
+    fieldButton.setToggleState (fieldOpen, juce::dontSendNotification);
+    simpButton.setToggleState (simpOpen, juce::dontSendNotification);
 }
 
 void HeaderBar::setActiveTab (int tab)
@@ -76,40 +91,31 @@ void HeaderBar::paint (juce::Graphics& g)
 
     // Logo + name.
     auto area = getLocalBounds().reduced (24, 10);
-    theme::drawIcon (g, theme::Icon::Logo, area.removeFromLeft (52).toFloat().reduced (4.0f, 10.0f), theme::accentLight, 2.2f);
-    area.removeFromLeft (12);
-    auto titleArea = area.removeFromLeft (320);
-    auto top = titleArea.removeFromTop (titleArea.getHeight() * 6 / 10);
-    juce::GlyphArrangement ga;
-    const juce::Font title (juce::FontOptions (32.0f, juce::Font::bold));
+    const juce::Font title (theme::display (36.0f));
     g.setFont (title);
     g.setColour (theme::text);
-    g.drawText ("KumAmp", top, juce::Justification::bottomLeft);
-    const int titleWidth = juce::GlyphArrangement::getStringWidthInt (title, "KumAmp ");
-    g.setColour (theme::accentLight);
-    g.drawText ("NAM", top.withTrimmedLeft (titleWidth), juce::Justification::bottomLeft);
+    g.drawText ("KUMAMP", area, juce::Justification::centredLeft);
+    area.removeFromLeft (juce::GlyphArrangement::getStringWidthInt (title, "KUMAMP") + 10);
+    g.setFont (theme::mono (17.0f, true));
+    g.setColour (theme::accent);
+    g.drawText ("//", area.removeFromLeft (28), juce::Justification::centredLeft);
+    g.setFont (theme::mono (11.0f));
     g.setColour (theme::textDim);
-    g.setFont (juce::FontOptions (14.0f));
-    g.drawText (juce::CharPointer_UTF8 ("NAM 0.5\xe2\x80\x93" "0.7  \xe2\x80\xa2  Tone3000  \xe2\x80\xa2  VST3 / AU"), titleArea,
-                juce::Justification::topLeft);
-
-    // Tab container.
-    g.setColour (theme::panel);
-    g.fillRoundedRectangle (tabArea.toFloat(), 12.0f);
-    g.setColour (theme::border);
-    g.drawRoundedRectangle (tabArea.toFloat().reduced (0.5f), 12.0f, 1.0f);
+    auto subtitle = area.removeFromLeft (180);
+    g.drawText ("NAM 0.5-0.7", subtitle.removeFromTop (subtitle.getHeight() / 2), juce::Justification::bottomLeft);
+    g.drawText ("TONE3000 / VST3 / AU", subtitle, juce::Justification::topLeft);
 
     // Stats.
     auto stats = statsArea;
-    g.setFont (juce::FontOptions (16.0f));
+    g.setFont (theme::mono (13.0f));
     auto dot = stats.removeFromRight (20).toFloat().withSizeKeepingCentre (9.0f, 9.0f);
-    g.setColour (audioRunning ? theme::good : theme::textDim);
-    g.fillEllipse (dot);
+    g.setColour (audioRunning ? theme::accent : theme::textDim);
+    g.fillRect (dot);
     stats.removeFromRight (10);
     for (const auto* textItem : { &blockText, &rateText, &bpmText, &cpuText })
     {
         const int w = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), *textItem) + 8;
-        g.setColour (theme::text.withAlpha (0.85f));
+        g.setColour (theme::text);
         g.drawText (*textItem, stats.removeFromRight (w), juce::Justification::centredRight);
         if (textItem != &cpuText)
         {
@@ -130,6 +136,9 @@ void HeaderBar::resized()
     for (auto& tab : tabs)
         tab->setBounds (t.removeFromLeft (w));
     statsArea = area.removeFromRight (420).reduced (20, 10);
+    fieldButton.setBounds (tabArea.getX() - 184, getHeight() / 2 - 19, 86, 38);
+    simpButton.setBounds (tabArea.getX() - 92, getHeight() / 2 - 19, 76, 38);
+    aboutButton.setBounds (tabArea.getRight() + 4, getHeight() / 2 - 17, 34, 34);
 }
 
 //==============================================================================
@@ -258,10 +267,10 @@ void Sidebar::paint (juce::Graphics& g)
         {
             const juce::String note (noteName (r.midiNote));
             g.setColour (theme::text.withAlpha (alpha));
-            g.setFont (juce::FontOptions (38.0f, juce::Font::bold));
+            g.setFont (theme::display (38.0f));
             g.drawText (note, top.withTrimmedRight (60), juce::Justification::centred);
             g.setColour (theme::textDim.withAlpha (alpha));
-            g.setFont (juce::FontOptions (15.0f));
+            g.setFont (theme::mono (13.0f));
             g.drawText ((r.cents >= 0 ? "+" : "") + juce::String (r.cents, 1) + " ct", top.removeFromRight (70), juce::Justification::centredRight);
         }
         else
@@ -281,13 +290,13 @@ void Sidebar::paint (juce::Graphics& g)
             const float distance = std::abs ((float) i - (segments - 1) * 0.5f) / ((segments - 1) * 0.5f);
             const float height = (float) meter.getHeight() * (0.45f + 0.55f * (1.0f - distance));
             auto seg = juce::Rectangle<float> ((float) meter.getX() + w * (float) i + 1.0f, (float) meter.getBottom() - height, w - 2.0f, height);
-            juce::Colour c = theme::panelRaised.brighter (0.15f);
+            juce::Colour c = theme::border;
             if (i == active)
                 c = std::abs (r.cents) <= 3.0f ? theme::good : (std::abs (r.cents) <= 10.0f ? theme::warn : theme::bad);
             else if (i == segments / 2)
-                c = theme::good.withAlpha (0.35f);
+                c = theme::text;
             g.setColour (c.withMultipliedAlpha (i == active ? alpha : 1.0f));
-            g.fillRoundedRectangle (seg, 1.5f);
+            g.fillRect (seg);
         }
     }
 
@@ -301,19 +310,20 @@ void Sidebar::paint (juce::Graphics& g)
         const auto b = s->getBounds();
         const auto caption = juce::Rectangle<int> (b.getX() - 10, b.getBottom() + 2, b.getWidth() + 20, 18);
         const auto pill = juce::Rectangle<int> (b.getCentreX() - 34, caption.getBottom() + 3, 68, 22).toFloat();
-        g.setColour (theme::text.withAlpha (0.85f));
-        g.setFont (juce::FontOptions (14.0f));
-        g.drawText (s == &gateThreshold ? "Thresh" : "Release", caption, juce::Justification::centred);
-        g.setColour (theme::panelRaised);
-        g.fillRoundedRectangle (pill, 11.0f);
+        g.setColour (theme::textDim);
+        g.setFont (theme::mono (11.0f));
+        g.drawText (s == &gateThreshold ? "THRESH" : "RELEASE", caption, juce::Justification::centred);
+        g.setColour (theme::border);
+        g.fillRect (pill.withTop (pill.getBottom() - 1.0f));
         g.setColour (theme::text);
-        g.setFont (juce::FontOptions (13.0f));
+        g.setFont (theme::mono (13.0f));
         g.drawText (s->getTextFromValue (s->getValue()), pill, juce::Justification::centred);
     }
 
     // Pitch range captions.
     const auto pk = pitchKnob.getBounds();
     g.setColour (theme::textDim);
+    g.setFont (theme::mono (11.0f));
     g.drawText ("-12", juce::Rectangle<int> (pk.getX() - 34, pk.getBottom() - 40, 30, 16), juce::Justification::centredRight);
     g.drawText ("+12", juce::Rectangle<int> (pk.getRight() + 4, pk.getBottom() - 40, 30, 16), juce::Justification::centredLeft);
 }
@@ -381,12 +391,12 @@ SceneBar::SceneBar()
         addAndMakeVisible (*b);
 
     prefix.setJustificationType (juce::Justification::centredRight);
-    prefix.setFont (juce::FontOptions (18.0f));
-    prefix.setColour (juce::Label::textColourId, theme::text.withAlpha (0.8f));
+    prefix.setFont (theme::mono (13.0f));
+    prefix.setColour (juce::Label::textColourId, theme::textDim);
     addAndMakeVisible (prefix);
 
     name.setJustificationType (juce::Justification::centredLeft);
-    name.setFont (juce::FontOptions (19.0f, juce::Font::bold));
+    name.setFont (juce::FontOptions (20.0f, juce::Font::bold));
     name.setEditable (false, true, false);
     name.setTooltip ("Doble clic para renombrar la escena");
     name.onTextChange = [this] { if (onNameEdited) onNameEdited (activeScene, name.getText()); };
@@ -442,16 +452,18 @@ void BlockPalette::Item::paint (juce::Graphics& g)
     const auto colour = theme::categoryColour (info.types.front());
     auto area = getLocalBounds().toFloat().reduced (3.0f);
 
-    g.setColour (palette.highlighted == group ? colour.withAlpha (0.16f) : theme::panelRaised.withAlpha (hot ? 1.0f : 0.7f));
-    g.fillRoundedRectangle (area, 10.0f);
-    g.setColour (palette.highlighted == group ? colour : theme::border);
-    g.drawRoundedRectangle (area, 10.0f, palette.highlighted == group ? 1.5f : 1.0f);
+    const bool active = palette.highlighted == group;
+    const auto foreground = active ? theme::ink : theme::text;
+    g.setColour (active ? colour : theme::panel);
+    g.fillRect (area);
+    g.setColour (active ? colour : (hot ? theme::text : theme::border));
+    g.drawRect (area, 1.0f);
 
     auto iconArea = area.removeFromTop (area.getHeight() * 0.58f).reduced (0.0f, 6.0f);
-    theme::drawIcon (g, info.icon, iconArea.withTrimmedTop (4.0f), hot ? colour : theme::text.withAlpha (0.75f));
-    g.setColour (theme::text.withAlpha (hot ? 1.0f : 0.8f));
-    g.setFont (juce::FontOptions (15.0f));
-    g.drawText (info.name, area.withTrimmedBottom (4.0f), juce::Justification::centred);
+    theme::drawIcon (g, info.icon, iconArea.withTrimmedTop (4.0f), foreground);
+    g.setColour (foreground);
+    g.setFont (theme::mono (11.0f, true));
+    g.drawText (juce::String (info.name).toUpperCase(), area.withTrimmedBottom (4.0f), juce::Justification::centred);
 }
 
 void BlockPalette::Item::mouseDrag (const juce::MouseEvent& e)

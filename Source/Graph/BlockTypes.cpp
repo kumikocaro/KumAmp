@@ -38,6 +38,7 @@ namespace
         { BlockType::AnalogDelay,     "analog_delay",     "Analog Delay",     C::Time },
         { BlockType::DigitalDelay,    "digital_delay",    "Digital Delay",    C::Time },
         { BlockType::ReverseDelay,    "reverse_delay",    "Reverse Delay",    C::Time },
+        { BlockType::RepeatPercussion, "repeat_percussion", "Repeat Percussion", C::Time },
         { BlockType::PlateReverb,     "plate_reverb",     "Plate Reverb",     C::Time },
         { BlockType::SpringReverb,    "spring_reverb",    "Spring Reverb",    C::Time },
         { BlockType::HallReverb,      "hall_reverb",      "Hall Reverb",      C::Time },

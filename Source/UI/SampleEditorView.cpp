@@ -309,7 +309,7 @@ void SampleEditorView::paint (juce::Graphics& g)
 
     const auto wave = waveArea.toFloat();
     g.setColour (theme::background);
-    g.fillRoundedRectangle (wave, 8.0f);
+    g.fillRect (wave);
 
     g.setColour (theme::text);
     g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
@@ -359,8 +359,8 @@ void SampleEditorView::paint (juce::Graphics& g)
             g.setColour (theme::accentLight);
             g.fillRect (x - 1.0f, wave.getY(), 2.0f, wave.getHeight());
         }
-        g.fillRoundedRectangle (startX - 1.0f, wave.getY(), 10.0f, 18.0f, 3.0f);
-        g.fillRoundedRectangle (endX - 9.0f, wave.getBottom() - 18.0f, 10.0f, 18.0f, 3.0f);
+        g.fillRect (startX - 1.0f, wave.getY(), 10.0f, 18.0f);
+        g.fillRect (endX - 9.0f, wave.getBottom() - 18.0f, 10.0f, 18.0f);
 
         if (const float playhead = block().getPlayheadSeconds(); playhead >= 0.0f)
         {
@@ -372,7 +372,7 @@ void SampleEditorView::paint (juce::Graphics& g)
     }
 
     g.setColour (dragOver ? theme::accentLight : theme::border);
-    g.drawRoundedRectangle (wave.reduced (0.5f), 8.0f, dragOver ? 2.0f : 1.0f);
+    g.drawRect (wave.reduced (0.5f), dragOver ? 2.0f : 1.0f);
 }
 
 void SampleEditorView::resized()

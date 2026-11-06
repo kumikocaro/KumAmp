@@ -8,18 +8,38 @@
 
 namespace kumamp::theme
 {
-inline const juce::Colour background  { 0xff0b0d14 };
-inline const juce::Colour panel       { 0xff12152a };
-inline const juce::Colour panelRaised { 0xff1a1e33 };
-inline const juce::Colour border      { 0xff262b45 };
-inline const juce::Colour text        { 0xffe7e9f3 };
-inline const juce::Colour textDim     { 0xff8b90a8 };
-inline const juce::Colour accent      { 0xff8b5cf6 };
-inline const juce::Colour accentLight { 0xffa78bfa };
-inline const juce::Colour good        { 0xff4ade80 };
-inline const juce::Colour warn        { 0xfff59e0b };
-inline const juce::Colour bad         { 0xffef4444 };
-inline const juce::Colour cable       { 0xff3a4062 };
+inline const juce::Colour ink         { 0xff0a0a0a };
+inline const juce::Colour bone        { 0xffe7e1ce };
+inline const juce::Colour background  = ink;
+inline const juce::Colour panel       = ink;
+inline const juce::Colour panelRaised { 0xff1b1a17 };
+inline const juce::Colour border      { 0xff49473f };
+inline const juce::Colour text        = bone;
+inline const juce::Colour textDim     { 0xff938d7e };
+inline const juce::Colour accent      { 0xffed6243 };
+inline const juce::Colour accentLight = accent;
+inline const juce::Colour good        { 0xffa8b45a };
+inline const juce::Colour warn        { 0xffe0a93b };
+inline const juce::Colour bad         = accent;
+inline const juce::Colour cable       = ink;
+
+/** The text colour that reads on a given solid fill. */
+inline juce::Colour textOn (juce::Colour fill)
+{
+    return background.overlaidWith (fill).getPerceivedBrightness() > 0.42f ? ink : bone;
+}
+
+/** Interface typefaces, embedded so Mac and Windows look the same. Keep one alive while the UI exists. */
+struct Typefaces
+{
+    Typefaces();
+    juce::Typeface::Ptr regular, semiBold, black, mono, monoMedium;
+};
+
+/** Headlines: Jost Black. */
+juce::FontOptions display (float height);
+/** Technical labels and values: IBM Plex Mono. */
+juce::FontOptions mono (float height, bool medium = false);
 
 /** Accent colour of a block family (tile border, icon, glow). */
 inline juce::Colour categoryColour (BlockType type)
@@ -27,31 +47,31 @@ inline juce::Colour categoryColour (BlockType type)
     switch (type)
     {
         case BlockType::ParametricEq:
-        case BlockType::GraphicEq:      return juce::Colour (0xff2dd4bf);   // EQ: teal
+        case BlockType::GraphicEq:      return juce::Colour (0xff3f9c93);   // EQ: teal
         default: break;
     }
 
     switch (getBlockTypeInfo (type).category)
     {
-        case BlockCategory::Input:      return juce::Colour (0xff22d3ee);
-        case BlockCategory::PitchPre:   return juce::Colour (0xffa855f7);
-        case BlockCategory::Experimental: return juce::Colour (0xfff472b6);   // pink
-        case BlockCategory::Drive:      return juce::Colour (0xff84cc16);   // Screamer green
-        case BlockCategory::Amp:        return juce::Colour (0xfff87171);
-        case BlockCategory::Cab:        return juce::Colour (0xfff59e0b);
-        case BlockCategory::Dynamics:   return juce::Colour (0xff34d399);
-        case BlockCategory::Modulation: return juce::Colour (0xff38bdf8);
-        case BlockCategory::Time:       return juce::Colour (0xff818cf8);
+        case BlockCategory::Input:      return juce::Colour (0xff7fb2b0);
+        case BlockCategory::PitchPre:   return juce::Colour (0xffb58aa5);
+        case BlockCategory::Experimental: return juce::Colour (0xffe59a8c);   // salmon
+        case BlockCategory::Drive:      return juce::Colour (0xffa8b45a);   // Screamer green
+        case BlockCategory::Amp:        return accent;
+        case BlockCategory::Cab:        return juce::Colour (0xffe0a93b);
+        case BlockCategory::Dynamics:   return juce::Colour (0xff6fa88a);
+        case BlockCategory::Modulation: return juce::Colour (0xff6f9fb5);
+        case BlockCategory::Time:       return juce::Colour (0xff8e95b8);
         case BlockCategory::Utility:
         case BlockCategory::Routing:    break;
     }
-    return juce::Colour (0xff94a3b8);
+    return textDim;
 }
 
 enum class Icon
 {
     Pitch, Wave, Octave, Dynamics, Eq, Amp, Speaker, Sine, Delay, Reverb, Utility,
-    Plus, Save, Undo, Redo, Menu, ChevronLeft, ChevronRight, Power, File, More, Info, Trash, Logo, Expand, Synth, Drive, Strings
+    Plus, Save, Undo, Redo, Menu, ChevronLeft, ChevronRight, Power, File, More, Info, Trash, Logo, Expand, Synth, Drive, Strings, Bolt, Note
 };
 
 Icon iconFor (BlockType type) noexcept;
@@ -70,21 +90,22 @@ const std::vector<PaletteGroup>& paletteGroups();
 /** The palette group a block belongs to (its variants: blocks it can be swapped for), or nullptr. */
 const PaletteGroup* paletteGroupOf (BlockType type);
 
-/** Card background used by every section. */
-inline void drawCard (juce::Graphics& g, juce::Rectangle<float> area, float radius = 12.0f)
+/** Card background used by every section: a hairline box under a heavy bone rule. */
+inline void drawCard (juce::Graphics& g, juce::Rectangle<float> area)
 {
     g.setColour (panel);
-    g.fillRoundedRectangle (area, radius);
+    g.fillRect (area);
     g.setColour (border);
-    g.drawRoundedRectangle (area.reduced (0.5f), radius, 1.0f);
+    g.drawRect (area, 1.0f);
+    g.setColour (bone);
+    g.fillRect (area.withHeight (3.0f));
 }
 
 inline void drawChip (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& label, juce::Colour colour)
 {
-    g.setColour (colour.withAlpha (0.16f));
-    g.fillRoundedRectangle (area, area.getHeight() * 0.5f);
-    g.setColour (colour.withAlpha (0.9f));
-    g.setFont (juce::FontOptions (13.0f));
-    g.drawText (label, area, juce::Justification::centred);
+    g.setColour (colour);
+    g.drawRect (area.reduced (0.5f), 1.0f);
+    g.setFont (mono (11.0f));
+    g.drawText (label.toUpperCase(), area, juce::Justification::centred);
 }
 } // namespace kumamp::theme

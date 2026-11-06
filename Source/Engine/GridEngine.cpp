@@ -62,6 +62,8 @@ void GridEngine::prepare (double newSampleRate, int maxBlockSize)
 
     auto result = RenderPlan::compile (model, makeResolver(), maxBlock);
     jassert (result.plan != nullptr);
+    if (result.plan != nullptr)
+        result.plan->setFusionBus (fusionBus);
     latency.store (result.plan != nullptr ? result.plan->getLatencySamples() : 0);
 
     plans.resetImmediately (std::move (result.plan));
@@ -279,6 +281,7 @@ bool GridEngine::commitModel (GridModel newModel, juce::String* error)
             return false;
         }
 
+        result.plan->setFusionBus (fusionBus);
         latency.store (result.plan->getLatencySamples());
         plans.publish (std::move (result.plan));
     }

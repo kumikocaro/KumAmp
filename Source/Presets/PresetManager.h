@@ -59,6 +59,10 @@ public:
 
     static Info readInfo (const juce::File& file);
 
+    /** Writes a preset file from its parts (FactoryPresets has no engine to save from). */
+    static juce::Result write (const juce::File& file, const juce::String& name, const juce::String& author,
+                               const juce::String& comment, const juce::ValueTree& globals, const juce::ValueTree& grid);
+
     const juce::String& getCurrentName() const noexcept { return currentName; }
     const juce::File& getCurrentFile() const noexcept { return currentFile; }
 

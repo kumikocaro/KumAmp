@@ -1,17 +1,18 @@
 #include "TunerView.h"
+#include "Theme.h"
 
 namespace kumamp
 {
 namespace
 {
-    const juce::Colour kBackground  { 0xff12141a };
-    const juce::Colour kPanel       { 0xff1a1d24 };
-    const juce::Colour kGrid        { 0xff2c313c };
-    const juce::Colour kText        { 0xffe6e9ef };
-    const juce::Colour kDim         { 0xff6b7280 };
-    const juce::Colour kInTune      { 0xff4cd964 };
-    const juce::Colour kClose       { 0xffffcc00 };
-    const juce::Colour kOff         { 0xffff5a4f };
+    const juce::Colour kBackground  = theme::background;
+    const juce::Colour kPanel       = theme::panelRaised;
+    const juce::Colour kGrid        = theme::border;
+    const juce::Colour kText        = theme::text;
+    const juce::Colour kDim         = theme::textDim;
+    const juce::Colour kInTune      = theme::good;
+    const juce::Colour kClose       = theme::warn;
+    const juce::Colour kOff         = theme::bad;
 
     constexpr float kInTuneCents = 3.0f;
     constexpr double kHoldSeconds = 1.5;   // keep showing the last note after the string dies
@@ -22,7 +23,7 @@ TunerView::TunerView()
     for (auto* b : { &traditionalButton, &traceButton })
     {
         b->setClickingTogglesState (false);
-        b->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3b82f6));
+        b->setColour (juce::TextButton::buttonOnColourId, theme::accent);
         addAndMakeVisible (b);
     }
     traditionalButton.onClick = [this] { mode = Traditional; updateModeButtons(); if (onModeChanged) onModeChanged (mode); repaint(); };
@@ -150,7 +151,7 @@ void TunerView::paint (juce::Graphics& g)
 
     auto area = displayArea.toFloat();
     g.setColour (kPanel);
-    g.fillRoundedRectangle (area, 10.0f);
+    g.fillRect (area);
 
     area = area.reduced (16.0f);
     paintNote (g, area.removeFromTop (96.0f));
@@ -183,7 +184,7 @@ void TunerView::paintNote (juce::Graphics& g, juce::Rectangle<float> area)
     const juce::String octave (noteOctave (r.midiNote));
     auto centre = area.withSizeKeepingCentre (220.0f, area.getHeight());
     g.setColour (colour);
-    g.setFont (juce::FontOptions (84.0f, juce::Font::bold));
+    g.setFont (theme::display (84.0f));
     g.drawText (name, centre.removeFromLeft (170.0f), juce::Justification::centredRight);
     g.setFont (juce::FontOptions (30.0f));
     g.drawText (octave, centre.withTrimmedTop (40.0f), juce::Justification::centredLeft);
@@ -205,7 +206,7 @@ void TunerView::paintTraditional (juce::Graphics& g, juce::Rectangle<float> area
     // --- Strobe bands -----------------------------------------------------------
     auto strobe = area.removeFromTop (area.getHeight() * 0.48f);
     g.setColour (kBackground);
-    g.fillRoundedRectangle (strobe, 6.0f);
+    g.fillRect (strobe);
 
     const auto stripeColour = ! live ? kDim.withAlpha (0.35f) : (inTune ? kInTune : kClose);
     const float bandHeight = strobe.getHeight() / 3.0f;
@@ -228,7 +229,7 @@ void TunerView::paintTraditional (juce::Graphics& g, juce::Rectangle<float> area
     if (inTune)
     {
         g.setColour (kInTune);
-        g.drawRoundedRectangle (strobe, 6.0f, 2.0f);
+        g.drawRect (strobe, 2.0f);
     }
 
     // --- Cents needle ---------------------------------------------------------
@@ -273,7 +274,7 @@ void TunerView::paintTrace (juce::Graphics& g, juce::Rectangle<float> area)
     auto plot = area;
 
     g.setColour (kBackground);
-    g.fillRoundedRectangle (plot, 6.0f);
+    g.fillRect (plot);
 
     // In-tune corridor and grid.
     g.setColour (kInTune.withAlpha (0.12f));

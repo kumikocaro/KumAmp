@@ -26,8 +26,8 @@ namespace
 juce::Colour EqView::bandColour (int band)
 {
     static const juce::Colour colours[] = {
-        juce::Colour (0xff22d3ee), juce::Colour (0xff4ade80), juce::Colour (0xfffacc15), juce::Colour (0xfffb923c),
-        juce::Colour (0xfff43f5e), juce::Colour (0xffe879f9), juce::Colour (0xffa78bfa), juce::Colour (0xff60a5fa),
+        juce::Colour (0xff7fb2b0), juce::Colour (0xffa8b45a), juce::Colour (0xffe0a93b), juce::Colour (0xffed6243),
+        juce::Colour (0xffe59a8c), juce::Colour (0xffb58aa5), juce::Colour (0xff8e95b8), juce::Colour (0xff6f9fb5),
     };
     return colours[(size_t) juce::jlimit (0, 7, band)];
 }
@@ -325,9 +325,8 @@ void EqView::paint (juce::Graphics& g)
     const auto bounds = getLocalBounds().toFloat();
     const auto area = plotArea();
 
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff171c28), 0.0f, area.getY(),
-                                             juce::Colour (0xff0b0e14), 0.0f, area.getBottom(), false));
-    g.fillRoundedRectangle (bounds, 10.0f);
+    g.setColour (theme::ink);
+    g.fillRect (bounds);
 
     auto* block = eq();
     if (block == nullptr)
@@ -339,8 +338,8 @@ void EqView::paint (juce::Graphics& g)
     // Spectrum: pre (outline) and post (filled).
     g.setColour (juce::Colours::white.withAlpha (0.16f));
     g.strokePath (spectrumPath (preSpectrum, false), juce::PathStrokeType (1.0f));
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff60a5fa).withAlpha (0.30f), 0.0f, area.getY() + area.getHeight() * 0.3f,
-                                             juce::Colour (0xff60a5fa).withAlpha (0.03f), 0.0f, area.getBottom(), false));
+    g.setGradientFill (juce::ColourGradient (theme::bone.withAlpha (0.22f), 0.0f, area.getY() + area.getHeight() * 0.3f,
+                                             theme::bone.withAlpha (0.03f), 0.0f, area.getBottom(), false));
     g.fillPath (spectrumPath (postSpectrum, true));
 
     // Grid.
@@ -370,7 +369,7 @@ void EqView::paint (juce::Graphics& g)
         g.drawHorizontalLine (juce::roundToInt (y), area.getX(), area.getRight());
         if (std::abs (db) != range)
         {
-            g.setColour (db == 0 ? juce::Colour (0xfffde68a) : theme::textDim);
+            g.setColour (db == 0 ? theme::bone : theme::textDim);
             g.drawText ((db > 0 ? "+" : "") + juce::String (db), juce::Rectangle<float> (area.getRight() - 34.0f, y - 8.0f, 30.0f, 16.0f),
                         juce::Justification::centredRight);
         }
@@ -427,9 +426,9 @@ void EqView::paint (juce::Graphics& g)
         g.strokePath (selectedCurve, juce::PathStrokeType (1.2f));
     }
 
-    g.setColour (juce::Colour (0xfffde68a).withAlpha (0.07f));
+    g.setColour (theme::bone.withAlpha (0.07f));
     g.fillPath (totalFill);
-    g.setColour (juce::Colour (0xfffff3c4));
+    g.setColour (theme::bone);
     g.strokePath (total, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     // Band listen: shade the region being heard and say so.
@@ -466,7 +465,7 @@ void EqView::paint (juce::Graphics& g)
 
         const auto badge = juce::Rectangle<float> (area.getX() + 12.0f, area.getY() + 10.0f, 170.0f, 24.0f);
         g.setColour (colour);
-        g.fillRoundedRectangle (badge, 12.0f);
+        g.fillRect (badge);
         g.setColour (juce::Colours::black.withAlpha (0.85f));
         g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
         g.drawText ("Escuchando banda " + juce::String (listening + 1), badge, juce::Justification::centred);
@@ -488,7 +487,7 @@ void EqView::paint (juce::Graphics& g)
         }
         g.setColour (colour);
         g.fillEllipse (p.x - kNodeRadius, p.y - kNodeRadius, 2 * kNodeRadius, 2 * kNodeRadius);
-        g.setColour (b == selectedBand ? juce::Colours::white : juce::Colours::black.withAlpha (0.5f));
+        g.setColour (b == selectedBand ? theme::bone : juce::Colours::black.withAlpha (0.5f));
         g.drawEllipse (p.x - kNodeRadius, p.y - kNodeRadius, 2 * kNodeRadius, 2 * kNodeRadius, b == selectedBand ? 2.0f : 1.0f);
         g.setColour (juce::Colours::black.withAlpha (0.75f));
         g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
@@ -507,10 +506,10 @@ void EqView::paint (juce::Graphics& g)
         const auto p = nodePosition (readoutBand);
         auto box = juce::Rectangle<float> (170.0f, 24.0f).withCentre ({ p.x, p.y - 28.0f });
         box = box.constrainedWithin (area.reduced (4.0f));
-        g.setColour (juce::Colour (0xee11141c));
-        g.fillRoundedRectangle (box, 6.0f);
+        g.setColour (theme::ink);
+        g.fillRect (box);
         g.setColour (bandColour (readoutBand));
-        g.drawRoundedRectangle (box, 6.0f, 1.0f);
+        g.drawRect (box, 1.0f);
         g.setColour (theme::text);
         g.setFont (juce::FontOptions (12.5f));
         g.drawText (text, box, juce::Justification::centred);
@@ -526,8 +525,8 @@ void EqView::paint (juce::Graphics& g)
     // Strip background.
     if (selectedBand >= 0 || ! compactMode)
     {
-        g.setColour (juce::Colour (0xe8141823));
-        g.fillRoundedRectangle (stripArea.toFloat(), 10.0f);
+        g.setColour (theme::ink);
+        g.fillRect (stripArea.toFloat());
         if (selectedBand < 0)
         {
             g.setColour (theme::textDim);
@@ -538,7 +537,7 @@ void EqView::paint (juce::Graphics& g)
         if (selectedBand >= 0)
         {
             g.setColour (bandColour (selectedBand).withAlpha (0.7f));
-            g.drawRoundedRectangle (stripArea.toFloat().reduced (0.5f), 10.0f, 1.2f);
+            g.drawRect (stripArea.toFloat().reduced (0.5f), 1.2f);
             g.setColour (bandColour (selectedBand));
             g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
             g.drawText ("Banda " + juce::String (selectedBand + 1), stripArea.withWidth (80).reduced (10, 0), juce::Justification::centredLeft);

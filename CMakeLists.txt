@@ -18,7 +18,7 @@ endif()
 # Windows: runtime de MSVC estatico -> el usuario no necesita instalar el VC++ Redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(KumAmp VERSION 0.1.8 LANGUAGES C CXX)
+project(KumAmp VERSION 0.1.9 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -167,6 +167,8 @@ set(KUMAMP_JUCE_SOURCES
     Source/DSP/Pitch/SamplerBlock.cpp
     Source/Tuner/Tuner.cpp
     Source/Presets/PresetManager.cpp
+    Source/Presets/FactoryPresets.cpp
+    Source/Field/FieldSession.cpp
     Source/Tone3000/Tone3000.cpp
     Source/UI/TunerView.cpp)
 
@@ -179,6 +181,9 @@ set(KUMAMP_UI_SOURCES
     Source/UI/EqView.cpp
     Source/UI/SampleEditorView.cpp
     Source/UI/SettingsView.cpp
+    Source/UI/FieldView.cpp
+    Source/UI/SimpView.cpp
+    Source/UI/AboutView.cpp
     Source/UI/PresetBrowser.cpp
     Source/UI/Tone3000Picker.cpp)
 
@@ -188,6 +193,21 @@ if(APPLE)
 else()
     set(KUMAMP_FORMATS VST3 Standalone)
 endif()
+
+# Tipografias de la interfaz (SIL OFL, ver Resources/Fonts/OFL-*.txt).
+juce_add_binary_data(KumAmpFonts
+    HEADER_NAME KumAmpFontData.h
+    NAMESPACE KumAmpFontData
+    SOURCES
+        Resources/Fonts/Jost-Regular.ttf
+        Resources/Fonts/Jost-SemiBold.ttf
+        Resources/Fonts/Jost-Black.ttf
+        Resources/Fonts/IBMPlexMono-Regular.ttf
+        Resources/Fonts/IBMPlexMono-Medium.ttf
+        Resources/About/kumo.jpg)
+set_target_properties(KumAmpFonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+set_property(SOURCE Source/UI/AboutView.cpp APPEND PROPERTY COMPILE_DEFINITIONS KUMAMP_VERSION="${PROJECT_VERSION}")
 
 juce_add_plugin(KumAmp
     PRODUCT_NAME                  "KumAmp"
@@ -236,6 +256,7 @@ target_link_libraries(KumAmp
     PRIVATE
         KumAmpCore
         KumAmpNam
+        KumAmpFonts
         kumamp_compile_flags
         juce::juce_audio_utils
         juce::juce_dsp
@@ -271,7 +292,7 @@ if(KUMAMP_BUILD_TESTS)
         KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
         KUMAMP_SNAPSHOT_DIR="${CMAKE_BINARY_DIR}/snapshots")
     target_link_libraries(KumAmpIntegrationTests PRIVATE
-        KumAmpCore KumAmpNam kumamp_compile_flags
+        KumAmpCore KumAmpNam KumAmpFonts kumamp_compile_flags
         juce::juce_audio_formats juce::juce_audio_processors juce::juce_dsp juce::juce_data_structures juce::juce_gui_basics
         juce::juce_cryptography
         juce::juce_recommended_config_flags)
@@ -298,6 +319,6 @@ if(KUMAMP_BUILD_TESTS)
         KUMAMP_NAM_EXAMPLES="${NAM_DIR}/example_models"
         KUMAMP_SNAPSHOT_DIR="${CMAKE_BINARY_DIR}/snapshots")
     target_link_libraries(KumAmpUiSnapshot PRIVATE
-        KumAmpCore KumAmpNam kumamp_compile_flags
+        KumAmpCore KumAmpNam KumAmpFonts kumamp_compile_flags
         juce::juce_audio_utils juce::juce_dsp juce::juce_cryptography juce::juce_recommended_config_flags)
 endif()

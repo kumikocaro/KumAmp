@@ -117,6 +117,41 @@ El layout es automático (`GridModel::autoLayout`): la columna es el camino más
 
 Los parámetros discretos se muestran como selectores con nombre (Off/On, Lento/Rápido…), usando la convención `unit = "A|B|C"` en `ParamInfo`.
 
+### Modo Simp
+
+El botón **SIMP** de la cabecera muestra la misma cadena de la forma más simple posible: una tarjeta numerada por cada efecto, que dice en una frase para qué sirve, con su botón de encendido y una sola perilla. La Entrada y la Salida quedan a los costados. Son los mismos valores que en el Grid: lo que cambiás en uno aparece en el otro.
+
+Arriba hay seis íconos con presets listos: Clean, High Gain, Crunch, Synth, Blues y Sitar. Se guardan en `Documents/KumAmp/Presets/Simp`. Clean, High Gain, Crunch y Blues usan modelos NAM que hay que tener en `Documents/KumAmp` (no se pueden incluir en el plugin); si falta el modelo, KumAmp avisa cuál buscar en TONE3000. Synth y Sitar no necesitan ninguno.
+
+### Vista Campo
+
+El botón **Vista Campo** de la cabecera abre un instrumento aparte para descubrir sonidos: tiene los mismos elementos que tu cadena, pero con valores propios. Mientras estás ahí suena el Campo y el Grid no se toca; al volver, el Grid suena exactamente como estaba. La entrada, el gate, el pitch y la salida generales siguen siendo los mismos.
+
+| Gesto | Efecto |
+|---|---|
+| Arrastrar una forma | Transforma su efecto: la posición mueve varios de sus parámetros a la vez. En su lugar de origen suena como en el Grid |
+| Tirar del cuadradito del borde | La forma se estira y sus parámetros oscilan: la distancia es cuánto y la dirección, a qué velocidad. Tocar más fuerte los empuja |
+| Superponer dos formas | Fusiona los efectos: la salida de cada uno entra al otro, también hacia atrás en la cadena |
+| Doble clic en una forma | La apaga o la prende |
+| Forma TAMPURA (mandala, si la cadena tiene Sitar) | Mueve solo los parámetros del drone. Doble clic prende el drone (y el Sitar, del que sale). Superponerla con otra forma manda el drone por ese efecto |
+| Cuerda MAREA | La velocidad de todo el campo |
+| Cuerda FUSIÓN | Cuánto se alimentan entre sí las formas fusionadas |
+| MUTAR | Otra relación entre formas y parámetros, y las formas movidas al azar |
+| GUARDAR TONO | Deja una ficha en el campo (`Documents/KumAmp/Campo`, hasta 10) |
+| Clic en una ficha | Recupera ese tono |
+| Arrastrar una ficha hacia otra | Mezcla los dos tonos en vivo; al soltar queda el resultado y la ficha vuelve a su lugar. Esc cancela |
+| Clic derecho en una ficha | La manda a la papelera |
+| DESDE GRID | Empieza de nuevo con los valores actuales del Grid |
+| PASAR AL GRID | Copia los valores al Grid, sin oscilaciones ni fusiones. No se puede deshacer |
+
+Los niveles quedan fuera de la transformación y la salida del Campo tiene un limitador, para que explorar no signifique un salto de volumen.
+
+### Presets de referencia
+
+La primera vez que abrís la pestaña PRESETS, KumAmp crea `Documents/KumAmp/Presets/Referencia` con 18 presets en 6 categorías: Limpios, Blues y Crunch, Rock, Metal, Ambient y Bajo. Cada uno trae cuatro escenas (Base, Solo, Más espacio, Seco). Son archivos comunes: se pueden editar o borrar y no vuelven a escribirse.
+
+**No incluyen modelos NAM.** Los términos de TONE3000 no permiten empaquetar sus tonos, así que cada preset nombra el archivo y su comentario dice de dónde bajarlo. Si el modelo está en `Documents/KumAmp`, lo encuentra solo; si no, el resto de la cadena carga igual y el amplificador queda sin modelo (el detalle está en el ⓘ del bloque).
+
 ### Sincronía con el tempo
 
 Delays (Digital, Analog, Tape, Reverse) y modulaciones (Chorus, Flanger, Phaser, Tremolo, Univibe) tienen un botón **SYNC** y una **División**:
@@ -298,7 +333,7 @@ Los parámetros `tuner_reference`, `tuner_mute` y `tuner_mode` se guardan con el
 | Amp / Cab | NAM · IR Loader dual con 11 gabinetes KumAmp (55 IR) |
 | Dinámica / EQ | Compresor (detector de pico desacoplado, knee, mezcla en paralelo) · EQ paramétrico (6 etapas) · EQ gráfico de 10 bandas · Transient Shaper |
 | Modulación | Chorus · Flanger · Phaser (2 a 12 etapas) · Tremolo (de seno a cuadrada, auto-pan) · Rotary (horn/drum con Doppler e inercia) · Univibe · Bitcrusher |
-| Delay | Digital (ping-pong y filtros en la realimentación) · Analog (BBD: oscurece y satura) · Tape (wow, flutter, saturación, desgaste) · Reverse |
+| Delay | Digital (ping-pong y filtros en la realimentación) · Analog (BBD: oscurece y satura) · Tape (wow, flutter, saturación, desgaste) · Reverse · Repeat Percussion (corte de volumen en diente de sierra, inspirado en los amplificadores de los 60, con una Cortina que hace que el sonido siga) |
 | Reverb | Hall, Shimmer y Cloud (FDN de 8 líneas con matriz Householder y modulación) · Plate (Dattorro 1997) · Spring (cadena de allpass dispersiva) |
 | Utilidad | Volumen/Pan · Splitter · Mixer |
 

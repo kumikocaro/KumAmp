@@ -13,6 +13,7 @@
 namespace kumamp
 {
 class DSPBlock;
+class FusionBus;
 
 /**
     Immutable, pre-allocated execution schedule compiled from a GridModel.
@@ -50,6 +51,9 @@ public:
 
     /** Audio thread (RT-safe): clears compensation delays and every block's state. */
     void resetState() noexcept;
+
+    /** Before publishing. Blocks then read and feed the bus around each process call. */
+    void setFusionBus (FusionBus* bus) noexcept { fusionBus = bus; }
 
     int getLatencySamples() const noexcept { return latencySamples; }
     int getMaxBlockSize() const noexcept   { return maxBlock; }
@@ -101,5 +105,6 @@ private:
     std::vector<std::pair<StoreId, ParamStore*>> lookup; // sorted by id
 
     int maxBlock = 0, numBuffers = 0, latencySamples = 0;
+    FusionBus* fusionBus = nullptr;
 };
 } // namespace kumamp

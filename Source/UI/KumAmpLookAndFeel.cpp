@@ -12,15 +12,15 @@ KumAmpLookAndFeel::KumAmpLookAndFeel()
     setColour (juce::TextButton::buttonColourId, panelRaised);
     setColour (juce::TextButton::buttonOnColourId, accent);
     setColour (juce::TextButton::textColourOffId, text);
-    setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    setColour (juce::TextButton::textColourOnId, ink);
     setColour (juce::ComboBox::backgroundColourId, panelRaised);
     setColour (juce::ComboBox::outlineColourId, border);
     setColour (juce::ComboBox::textColourId, text);
     setColour (juce::ComboBox::arrowColourId, textDim);
     setColour (juce::PopupMenu::backgroundColourId, panelRaised);
     setColour (juce::PopupMenu::textColourId, text);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, accent.withAlpha (0.35f));
-    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, accent);
+    setColour (juce::PopupMenu::highlightedTextColourId, ink);
     setColour (juce::PopupMenu::headerTextColourId, textDim);
     setColour (juce::Slider::textBoxTextColourId, text);
     setColour (juce::Slider::textBoxBackgroundColourId, panelRaised);
@@ -38,6 +38,21 @@ KumAmpLookAndFeel::KumAmpLookAndFeel()
     setColour (juce::TooltipWindow::backgroundColourId, panelRaised);
     setColour (juce::TooltipWindow::textColourId, text);
     setColour (juce::TooltipWindow::outlineColourId, border);
+    setColour (juce::ScrollBar::thumbColourId, textDim);
+
+    juce::LookAndFeel::setDefaultLookAndFeel (this);
+}
+
+KumAmpLookAndFeel::~KumAmpLookAndFeel()
+{
+    juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+}
+
+juce::Typeface::Ptr KumAmpLookAndFeel::getTypefaceForFont (const juce::Font& font)
+{
+    if (font.getTypefaceName() == juce::Font::getDefaultSansSerifFontName())
+        return font.isBold() ? typefaces->semiBold : typefaces->regular;
+    return LookAndFeel_V4::getTypefaceForFont (font);
 }
 
 void KumAmpLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float position,
@@ -51,96 +66,119 @@ void KumAmpLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
     const float arcRadius = radius - arcWidth * 0.5f;
     const float angle = startAngle + position * (endAngle - startAngle);
     const auto arcColour = slider.findColour (juce::Slider::trackColourId);
+    const juce::PathStrokeType arcStroke (arcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::butt);
 
     // Track + value arc (from the centre for bipolar ranges like -12..+12).
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, startAngle, endAngle, true);
     g.setColour (border);
-    g.strokePath (track, juce::PathStrokeType (arcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.strokePath (track, arcStroke);
 
     const bool bipolar = slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0;
     const float origin = bipolar ? startAngle + (float) slider.valueToProportionOfLength (0.0) * (endAngle - startAngle) : startAngle;
     juce::Path value;
     value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, std::min (origin, angle), std::max (origin, angle), true);
     g.setColour (slider.isEnabled() ? arcColour : textDim);
-    g.strokePath (value, juce::PathStrokeType (arcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.strokePath (value, arcStroke);
 
-    // Knob body.
+    // Flat bone disc with an ink pointer.
     const float knobRadius = arcRadius - arcWidth * 1.4f;
-    const auto knob = juce::Rectangle<float> (knobRadius * 2.0f, knobRadius * 2.0f).withCentre (centre);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2a2f48), knob.getX(), knob.getY(),
-                                             juce::Colour (0xff0f1220), knob.getRight(), knob.getBottom(), false));
-    g.fillEllipse (knob);
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.drawEllipse (knob, 1.5f);
-    g.setColour (juce::Colours::white.withAlpha (0.06f));
-    g.drawEllipse (knob.reduced (1.5f), 1.0f);
+    g.setColour (slider.isEnabled() ? bone : textDim);
+    g.fillEllipse (juce::Rectangle<float> (knobRadius * 2.0f, knobRadius * 2.0f).withCentre (centre));
 
-    // Pointer.
-    const auto tip = centre.getPointOnCircumference (knobRadius * 0.82f, angle);
-    const auto base = centre.getPointOnCircumference (knobRadius * 0.35f, angle);
-    g.setColour (text);
-    g.drawLine ({ base, tip }, std::max (2.0f, knobRadius * 0.09f));
+    const auto tip = centre.getPointOnCircumference (knobRadius, angle);
+    const auto base = centre.getPointOnCircumference (knobRadius * 0.3f, angle);
+    g.setColour (ink);
+    g.drawLine ({ base, tip }, std::max (2.5f, knobRadius * 0.12f));
 }
 
 void KumAmpLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour& colour,
                                               bool highlighted, bool down)
 {
     using namespace theme;
-    const auto area = button.getLocalBounds().toFloat().reduced (0.5f);
-    const float radius = std::min (8.0f, area.getHeight() * 0.3f);
+    const auto area = button.getLocalBounds().toFloat();
     auto fill = button.getToggleState() ? button.findColour (juce::TextButton::buttonOnColourId) : colour;
     if (down) fill = fill.brighter (0.15f);
     else if (highlighted) fill = fill.brighter (0.07f);
 
     g.setColour (fill);
-    g.fillRoundedRectangle (area, radius);
+    g.fillRect (area);
     if (! button.getToggleState())
     {
-        g.setColour (border);
-        g.drawRoundedRectangle (area, radius, 1.0f);
+        g.setColour (highlighted ? text : border);
+        g.drawRect (area, 1.0f);
     }
+}
+
+void KumAmpLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button, bool, bool)
+{
+    const auto fill = button.findColour (button.getToggleState() ? juce::TextButton::buttonOnColourId
+                                                                 : juce::TextButton::buttonColourId);
+    g.setFont (getTextButtonFont (button, button.getHeight()));
+    g.setColour (theme::textOn (fill).withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
+    g.drawFittedText (button.getButtonText().toUpperCase(), button.getLocalBounds().reduced (4, 2),
+                      juce::Justification::centred, 2, 0.8f);
 }
 
 juce::Font KumAmpLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
 {
-    return juce::FontOptions (std::min (16.0f, (float) buttonHeight * 0.48f));
+    return juce::FontOptions (std::min (15.0f, (float) buttonHeight * 0.5f), juce::Font::bold);
+}
+
+void KumAmpLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool highlighted, bool)
+{
+    using namespace theme;
+    const auto box = button.getLocalBounds().removeFromLeft (button.getHeight()).toFloat().withSizeKeepingCentre (16.0f, 16.0f);
+    if (button.getToggleState())
+    {
+        g.setColour (accent);
+        g.fillRect (box);
+    }
+    else
+    {
+        g.setColour (highlighted ? text : border);
+        g.drawRect (box, 1.0f);
+    }
+    g.setColour (text.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
+    g.setFont (juce::FontOptions (15.0f));
+    g.drawFittedText (button.getButtonText(), button.getLocalBounds().withTrimmedLeft (button.getHeight() + 2),
+                      juce::Justification::centredLeft, 2, 0.9f);
 }
 
 void KumAmpLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox& box)
 {
     using namespace theme;
-    const auto area = juce::Rectangle<float> ((float) width, (float) height).reduced (0.5f);
+    const auto area = juce::Rectangle<float> ((float) width, (float) height);
     g.setColour (box.findColour (juce::ComboBox::backgroundColourId));
-    g.fillRoundedRectangle (area, 8.0f);
-    g.setColour (box.hasKeyboardFocus (false) ? accent : border);
-    g.drawRoundedRectangle (area, 8.0f, 1.0f);
+    g.fillRect (area);
+    g.setColour (box.hasKeyboardFocus (false) || box.isMouseOver (true) ? text : border);
+    g.drawRect (area, 1.0f);
 
     juce::Path chevron;
     const float cx = (float) width - 18.0f, cy = (float) height * 0.5f;
     chevron.startNewSubPath (cx - 5.0f, cy - 2.5f);
     chevron.lineTo (cx, cy + 2.5f);
     chevron.lineTo (cx + 5.0f, cy - 2.5f);
-    g.setColour (textDim);
-    g.strokePath (chevron, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour (accent);
+    g.strokePath (chevron, juce::PathStrokeType (1.8f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
 }
 
 void KumAmpLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
 {
     label.setBounds (10, 1, box.getWidth() - 36, box.getHeight() - 2);
-    label.setFont (juce::FontOptions (std::min (16.0f, (float) box.getHeight() * 0.48f)));
+    label.setFont (theme::mono (std::min (14.0f, (float) box.getHeight() * 0.44f)));
 }
 
 void KumAmpLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
 {
-    // Slider value boxes become pills.
+    // Slider value boxes: mono figures over a hairline.
     if (dynamic_cast<juce::Slider*> (label.getParentComponent()) != nullptr && ! label.isBeingEdited())
     {
         const auto area = label.getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (theme::panelRaised);
-        g.fillRoundedRectangle (area, area.getHeight() * 0.5f);
+        g.setColour (theme::border);
+        g.fillRect (area.withTop (area.getBottom() - 1.0f));
         g.setColour (theme::text);
-        g.setFont (juce::FontOptions (std::min (15.0f, area.getHeight() * 0.62f)));
+        g.setFont (theme::mono (std::min (14.0f, area.getHeight() * 0.62f)));
         g.drawText (label.getText(), area, juce::Justification::centred);
         return;
     }
@@ -157,11 +195,22 @@ void KumAmpLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w
     }
     const float cy = (float) y + (float) height * 0.5f;
     g.setColour (theme::border);
-    g.fillRoundedRectangle ((float) x, cy - 2.0f, (float) width, 4.0f, 2.0f);
+    g.fillRect ((float) x, cy - 1.0f, (float) width, 2.0f);
     g.setColour (theme::accent);
-    g.fillRoundedRectangle ((float) x, cy - 2.0f, position - (float) x, 4.0f, 2.0f);
-    g.setColour (theme::accentLight);
-    g.fillEllipse (position - 7.0f, cy - 7.0f, 14.0f, 14.0f);
+    g.fillRect ((float) x, cy - 2.0f, position - (float) x, 4.0f);
+    g.setColour (theme::bone);
+    g.fillRect (position - 4.0f, cy - 9.0f, 8.0f, 18.0f);
+}
+
+void KumAmpLookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar, int x, int y, int width, int height, bool vertical,
+                                       int thumbStart, int thumbSize, bool over, bool down)
+{
+    if (thumbSize <= 0)
+        return;
+    const auto thumb = vertical ? juce::Rectangle<int> (x + width - 5, thumbStart, 4, thumbSize)
+                                : juce::Rectangle<int> (thumbStart, y + height - 5, thumbSize, 4);
+    g.setColour (over || down ? theme::text : bar.findColour (juce::ScrollBar::thumbColourId));
+    g.fillRect (thumb);
 }
 
 void KumAmpLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)

@@ -4,8 +4,10 @@
 #include "../../Core/DspPrimitives.h"
 #include "../../Core/Smoothing.h"
 #include "../../Graph/DSPBlock.h"
+#include "../Time/ReverbBlocks.h"
 
 #include <array>
+#include <vector>
 
 namespace kumamp
 {
@@ -92,6 +94,35 @@ protected:
 private:
     Lfo lfo;
     LinearSmoother depth;
+};
+
+/** Repeat percussion: the organ and solid-state amp effect of the 60s: a reverse sawtooth
+    chops the volume, so each cycle hits at full level and decays. The original is not an
+    echo; Cortina holds the sound in a diffuse tail, chopped too, so it keeps going after you
+    stop playing (at 100 % it takes minutes to fade). */
+class RepeatPercussionBlock final : public DSPBlock
+{
+public:
+    enum Param { RateHz, Depth, Decay, Sync, Division, Curtain, NumParams };
+    explicit RepeatPercussionBlock (StoreId id);
+    std::string getDisplayOverride (int param) const override;
+    float effectiveRateHz() const noexcept;
+
+protected:
+    void prepareBlock (double, int) override;
+    void resetBlock() noexcept override;
+    void processBlock (float*, float*, int) noexcept override;
+
+private:
+    Lfo lfo;
+    LinearSmoother depth, curtain;
+    float envelope = 1.0f, envelopeCoef = 1.0f;
+
+    // Curtain: a diffuse network, not a delay of one cycle: that is a comb that makes
+    // some notes ring and cancels others.
+    FdnReverbCore network;
+    ReverbInput diffusion;
+    float wetPeak = 0.0f, wetRelease = 1.0f;
 };
 
 /** Rotary speaker: horn/drum crossover, each with Doppler + AM, inertia when

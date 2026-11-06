@@ -482,6 +482,133 @@ int main()
         pump (60);
     }
 
+    // CAMPO view: arrival, a form dragged and stretched, a fusion, tokens being blended.
+    if (kumEditor != nullptr)
+    {
+        auto& field = kumEditor->getFieldView();
+        auto& session = processor.getField();
+        const auto tones = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kumamp_snapshot_tones");
+        tones.deleteRecursively();
+        session.setToneFolder (tones);
+        kumEditor->showField (true);
+        session.setToneFolder (tones);
+        for (int i = 0; i < 12; ++i)
+        {
+            pump (2);
+            field.advanceAnimation (1.0 / 30.0);
+        }
+        allOk = save ("editor_field.png") && allOk;
+
+        const auto blobNamed = [&session] (kumamp::BlockType type)
+        {
+            for (int i = 0; i < (int) session.getBlobs().size(); ++i)
+                if (session.getBlobs()[(size_t) i].type == type)
+                    return i;
+            return 0;
+        };
+        const int amp = blobNamed (kumamp::BlockType::NamAmp), delay = blobNamed (kumamp::BlockType::DigitalDelay),
+                  reverb = blobNamed (kumamp::BlockType::PlateReverb), chorus = blobNamed (kumamp::BlockType::Chorus);
+        for (const int i : { amp, delay, reverb, chorus })
+            if (! session.getBlobs()[(size_t) i].on)
+                session.toggleBlob (i);
+
+        auto c = field.getBlobCentre (chorus);
+        field.press (c);
+        field.dragTo (c.translated (-30.0f, -130.0f));
+        pump (2);
+        allOk = save ("editor_field_drag.png") && allOk;
+        field.release();
+
+        const auto handle = field.getBlobHandle (amp);
+        field.press (handle);
+        field.dragTo (handle.translated (60.0f, 110.0f));
+        pump (2);
+        allOk = save ("editor_field_stretch.png") && allOk;
+        field.release();
+
+        c = field.getBlobCentre (reverb);
+        const auto target = field.getBlobCentre (delay).translated (34.0f, 16.0f);
+        field.press (c);
+        field.dragTo (target);
+        field.release();
+        for (int i = 0; i < 6; ++i)
+            field.advanceAnimation (1.0 / 30.0);
+        session.saveTone();
+        session.mutate();
+        session.saveTone();
+        pump (2);
+        allOk = save ("editor_field_fusion.png") && allOk;
+
+        const auto a = field.getTokenCentre (0), b = field.getTokenCentre (1);
+        field.press (a);
+        field.dragTo (a + (b - a) * 0.5f);
+        pump (2);
+        allOk = save ("editor_field_blend.png") && allOk;
+        field.cancelDrag();
+
+        // The tampura: its mandala lit, alone and then sent through the delay.
+        session.resetFromGrid();
+        for (const int i : { amp, delay, reverb })
+            if (! session.getBlobs()[(size_t) i].on)
+                session.toggleBlob (i);
+        int drone = -1;
+        for (int i = 0; i < (int) session.getBlobs().size(); ++i)
+            if (session.getBlobs()[(size_t) i].tanpura)
+                drone = i;
+        if (drone >= 0)
+        {
+            if (! session.getBlobs()[(size_t) drone].on)
+                session.toggleBlob (drone);
+            session.setBlobStretch (drone, 0.2f, 2.2f);
+            session.setBlobPosition (drone, 0.5f, 0.45f);
+            for (int i = 0; i < 9; ++i)
+                field.advanceAnimation (1.0 / 24.0);
+            pump (2);
+            allOk = save ("editor_field_tampura.png") && allOk;
+
+            const auto& d = session.getBlobs()[(size_t) delay];
+            session.setBlobPosition (drone, d.x + 0.06f, d.y - 0.06f);
+            for (int i = 0; i < 5; ++i)
+                field.advanceAnimation (1.0 / 24.0);
+            pump (2);
+            allOk = save ("editor_field_tampura_fused.png") && allOk;
+        }
+
+        // What the animation costs on this machine.
+        juce::Image frame (juce::Image::RGB, field.getWidth(), field.getHeight(), true);
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; i < 20; ++i)
+        {
+            juce::Graphics g (frame);
+            field.advanceAnimation (1.0 / 30.0);
+            field.paint (g);
+        }
+        std::printf ("field view: %.1f ms per frame\n", (juce::Time::getMillisecondCounterHiRes() - start) / 20.0);
+
+        kumEditor->showField (false);
+        pump (5);
+        allOk = save ("editor_field_back.png") && allOk;
+        tones.deleteRecursively();
+    }
+
+    // SIMP view and ACERCA DE.
+    if (kumEditor != nullptr)
+    {
+        kumEditor->showSimp (true);
+        pump (5);
+        allOk = save ("editor_simp.png") && allOk;
+        kumEditor->getSimpView().presetNameSource = [] { return juce::String ("High Gain"); };
+        kumEditor->getSimpView().refresh();
+        pump (5);
+        allOk = save ("editor_simp_icons.png") && allOk;
+        kumEditor->showSimp (false);
+        kumEditor->showAbout (true);
+        pump (5);
+        allOk = save ("editor_about.png") && allOk;
+        kumEditor->showAbout (false);
+        pump (5);
+    }
+
     // Settings tab with guitar -> MIDI on: check MIDI notes come out of processBlock.
     if (auto* param = processor.getParameters().getParameter ("midi_out_on"))
         param->setValueNotifyingHost (1.0f);

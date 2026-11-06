@@ -28,7 +28,7 @@ enum class BlockType : std::uint16_t
     // Modulation
     Chorus, Flanger, Phaser, Tremolo, Rotary, Univibe, Bitcrusher,
     // Time
-    TapeDelay, AnalogDelay, DigitalDelay, ReverseDelay,
+    TapeDelay, AnalogDelay, DigitalDelay, ReverseDelay, RepeatPercussion,
     PlateReverb, SpringReverb, HallReverb, ShimmerReverb, CloudReverb,
     // Utility / routing
     Volume, Splitter, Mixer,

@@ -48,6 +48,14 @@ namespace
         { "sync",     "Sync",       0.0f,   1.0f,  0.0f, "Off|On", true },
         { "division", "Division",   0.0f,  15.0f,  9.0f, tempo::kDivisionChoices, true },
     };
+    constexpr ParamInfo kRepeatParams[] = {
+        { "rate",  "Rate",   0.5f,  30.0f,  7.0f, "Hz", false },
+        { "depth", "Depth",  0.0f, 100.0f, 78.0f, "%",  false },   // the originals are fixed around 75-80 %
+        { "decay", "Golpe",  0.0f, 100.0f, 40.0f, "%",  false },   // 0 = plain sawtooth, 100 = short hit
+        { "sync",     "Sync",       0.0f,   1.0f,  0.0f, "Off|On", true },
+        { "division", "Division",   0.0f,  15.0f,  9.0f, tempo::kDivisionChoices, true },
+        { "feedback", "Cortina",    0.0f, 100.0f,  0.0f, "%",  false },   // 100 = the sound barely fades
+    };
     constexpr ParamInfo kRotaryParams[] = {
         { "speed",   "Velocidad",  0.0f,   1.0f,   0.0f, "Lento|Rapido", true },
         { "inertia", "Inercia",    0.2f,   3.0f,   1.0f, "x",  false },
@@ -75,6 +83,7 @@ namespace
     static_assert (std::size (kFlangerParams) == FlangerBlock::NumParams);
     static_assert (std::size (kPhaserParams)  == PhaserBlock::NumParams);
     static_assert (std::size (kTremoloParams) == TremoloBlock::NumParams);
+    static_assert (std::size (kRepeatParams) == RepeatPercussionBlock::NumParams);
     static_assert (std::size (kRotaryParams)  == RotaryBlock::NumParams);
     static_assert (std::size (kUnivibeParams) == UnivibeBlock::NumParams);
     static_assert (std::size (kCrusherParams) == BitcrusherBlock::NumParams);
@@ -280,6 +289,83 @@ void TremoloBlock::processBlock (float* left, float* right, int numSamples) noex
         left[i]  *= 1.0f - d * (0.5f - 0.5f * wl);
         right[i] *= 1.0f - d * (0.5f - 0.5f * wr);
     }
+}
+
+//==============================================================================
+RepeatPercussionBlock::RepeatPercussionBlock (StoreId id) : DSPBlock (id, BlockType::RepeatPercussion, kRepeatParams, NumParams) {}
+
+void RepeatPercussionBlock::prepareBlock (double sampleRate, int)
+{
+    lfo.prepare (sampleRate);
+    depth.prepare (sampleRate, 0.02);
+    envelopeCoef = 1.0f - std::exp (-1.0f / (0.0007f * (float) sampleRate));   // the jump takes about 1 ms: a hit, not a click
+    curtain.prepare (sampleRate, 0.03);
+    network.prepare (sampleRate, 1.0f);
+    diffusion.prepare (sampleRate, 4, 1.0f);
+    wetRelease = std::exp (-1.0f / (0.3f * (float) sampleRate));
+    resetBlock();
+}
+
+void RepeatPercussionBlock::resetBlock() noexcept
+{
+    lfo.reset();
+    envelope = 1.0f;
+    depth.setCurrentAndTarget (getParam (Depth) * 0.01f);
+    curtain.setCurrentAndTarget (getParam (Curtain) * 0.01f);
+    network.reset();
+    diffusion.reset();
+    wetPeak = 0.0f;
+}
+
+void RepeatPercussionBlock::processBlock (float* left, float* right, int numSamples) noexcept
+{
+    lfo.setFrequency (effectiveRateHz());
+    depth.setTarget (getParam (Depth) * 0.01f);
+    curtain.setTarget (getParam (Curtain) * 0.01f);
+    const float curve = 1.0f + getParam (Decay) * 0.05f;
+
+    // From a few seconds to minutes: at 100 % the sound outlasts whatever you play next.
+    const float amount = getParam (Curtain) * 0.01f;
+    const bool tail = amount > 0.0f || curtain.isSmoothing();
+    if (tail)
+    {
+        network.configure (1.0f, 0.5f * std::pow (360.0f, amount), 7000.0f, 0.35f, 0.4f);
+        for (auto& f : diffusion.lowCut)
+            f.setHighPass (getSampleRate(), 80.0);
+    }
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float target = std::pow (1.0f - (float) lfo.advance(), curve);
+        envelope += envelopeCoef * (target - envelope);
+        const float gain = 1.0f - depth.next() * (1.0f - envelope);
+        const float wet = curtain.next();
+
+        float l = left[i], r = right[i];
+        if (tail)
+        {
+            // A held tail can only grow with what you play: the louder it is, the less goes in.
+            const float feed = 1.0f / (1.0f + 3.0f * wetPeak);
+            float inL = l * feed, inR = r * feed, outL = 0.0f, outR = 0.0f;
+            diffusion.process (inL, inR, 0.0f, 0.7f);
+            network.process (inL, inR, outL, outR);
+            wetPeak = std::max (std::max (std::abs (outL), std::abs (outR)), wetPeak * wetRelease);
+            l += wet * std::tanh (outL);
+            r += wet * std::tanh (outR);
+        }
+        left[i]  = l * gain;
+        right[i] = r * gain;
+    }
+}
+
+float RepeatPercussionBlock::effectiveRateHz() const noexcept
+{
+    return getParam (Sync) > 0.5f ? (float) tempo::divisionHz (getParam (Division), getTempoBpm()) : getParam (RateHz);
+}
+
+std::string RepeatPercussionBlock::getDisplayOverride (int param) const
+{
+    return param == RateHz && getParam (Sync) > 0.5f ? syncedText (getParam (Division), effectiveRateHz()) : std::string {};
 }
 
 //==============================================================================
